@@ -8,14 +8,15 @@ ALFA-K-inferred fitness support.
 
 1. `01_reference_ploidy/01_derive_reference_ploidy.R` derives PDX-informed
    chromosome-specific copy-number support and the reference mean ploidy.
-2. `02_landscape_generation/02_generate_landscapes.R` creates 200 reproducible
-   GRF landscapes.
+2. `02_landscape_generation/02_generate_landscapes.R` creates the requested
+   number of reproducible GRF landscapes and records their exact GRF
+   parameters.
 3. `03_bounded_grf_abm/03_run_bounded_grf_abm.R` runs 20 LHS `p_mis` values ×
-   10 replicates per landscape (40,000 phase-1 trajectories).
+   10 replicates per landscape.
 4. `04_alfak_inference/04_fit_alfak_landscapes.R` fits the phase-1 landscapes.
 5. `05_phase2_inferred_abm/05_run_phase2_inferred_abm.R` continues every
    phase-1 replicate under each of the 20 second-stage rates on its own
-   inferred fitness support (800,000 phase-2 trajectories).
+   inferred fitness support.
 6. `06_phase2_alfak_inference/06_fit_phase2_landscapes.R` fits phase-2
    landscapes.
 7. `07_phase2_topology_analysis/07_compare_phase2_topologies.R` compares
@@ -27,10 +28,15 @@ Run each script from the project root, passing the root as its first argument:
 
 ```sh
 Rscript 01_reference_ploidy/01_derive_reference_ploidy.R .
-Rscript 02_landscape_generation/02_generate_landscapes.R .
-Rscript 03_bounded_grf_abm/03_run_bounded_grf_abm.R . <workers> [landscape_index] [n_steps]
-Rscript 05_phase2_inferred_abm/05_run_phase2_inferred_abm.R . <workers> <landscape_index> <p_mis_phase1_index>
+Rscript 02_landscape_generation/02_generate_landscapes.R . [n_landscapes]
+Rscript 03_bounded_grf_abm/03_run_bounded_grf_abm.R . <workers> [landscape_index] [p_mis_index] [replicate_id] [n_steps]
+Rscript 05_phase2_inferred_abm/05_run_phase2_inferred_abm.R . <workers> <landscape_index> <p_mis_phase1_index> <replicate_id> <p_mis_phase2_index>
 ```
+
+With the default `n_landscapes = 200`, phase 1 produces
+`200 * 20 * 10 = 40,000` ABM trajectories and phase 2 produces
+`200 * 20 * 10 * 20 = 800,000` ABM trajectories. Other landscape counts use
+the same formulas.
 
 For local use, install the local package into the R library selected by
 `R_LIBS_USER` (or an existing entry in `.libPaths()`):

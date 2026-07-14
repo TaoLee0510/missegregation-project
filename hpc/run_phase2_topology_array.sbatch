@@ -1,7 +1,6 @@
 #!/bin/bash
 # One bounded topology-analysis task per original landscape.
 #SBATCH --job-name=phase2-topology
-#SBATCH --array=1-200
 #SBATCH --cpus-per-task=1
 #SBATCH --time=1-00:00:00
 #SBATCH --mem=4G

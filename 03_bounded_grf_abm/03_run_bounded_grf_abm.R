@@ -1,9 +1,11 @@
 #!/usr/bin/env Rscript
 
-# Generate a chromosome-specifically bounded GRF ABM. The initial population
-# is dispersed across 50 in-bounds FQ states; every in-bounds descendant
-# receives fitness directly from the GRF. Bounds are empirical PDX support,
-# not the small FQ + NN inference shell.
+# Generate a chromosome-specifically bounded GRF ABM. Initial karyotype
+# candidates are sampled from the bounded GRF, then converted to cell counts
+# from an x0 frequency vector using the same integer-allocation logic as
+# alfakR's ABM wrapper. Every in-bounds descendant receives fitness directly
+# from the GRF. Bounds are empirical PDX support, not the small FQ + NN
+# inference shell.
 
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args) >= 1L) normalizePath(args[[1]]) else getwd()
@@ -56,7 +58,7 @@ n_replicates <- 10L
 n_p_mis <- 20L
 n_frequent_karyotypes <- 50L
 diploid_tag <- paste(rep.int(2L, 22L), collapse = ".")
-model_version <- "bounded_grf_v5_no_diploid_state"
+model_version <- "bounded_grf_v6_alfak_x0_initialization_no_diploid_state"
 landscape_digest_cache <- new.env(parent = emptyenv())
 
 landscape_digest <- function(landscape_id) {
@@ -91,9 +93,9 @@ make_reference_ploidy_seed <- function() {
   state
 }
 
-# Sample 50 distinct, plausible initial FQ states from the bounded GRF.  This
-# is a Metropolis chain on one-missegregation moves; the ploidy factor only
-# defines the starting ensemble and does not modify the GRF during the ABM.
+# Sample distinct, plausible initial FQ states from the bounded GRF.  This is
+# a Metropolis chain on one-missegregation moves; the ploidy factor only
+# defines the starting x0 ensemble and does not modify the GRF during the ABM.
 sample_initial_fq <- function(landscape, n_fq, seed, burnin = 1000L, thin = 20L, ploidy_sd = 0.35, ploidy_band = 0.35) {
   set.seed(seed)
   state <- make_reference_ploidy_seed()
@@ -106,6 +108,7 @@ sample_initial_fq <- function(landscape, n_fq, seed, burnin = 1000L, thin = 20L,
   current_score <- score(state)
   attempts <- 0L
   accepted <- character()
+  accepted_scores <- numeric()
   max_attempts <- burnin + thin * n_fq * 100L
   while (length(accepted) < n_fq && attempts < max_attempts) {
     attempts <- attempts + 1L
@@ -119,10 +122,64 @@ sample_initial_fq <- function(landscape, n_fq, seed, burnin = 1000L, thin = 20L,
         current_score <- candidate_score
       }
     }
-    if (attempts > burnin && attempts %% thin == 0L) accepted <- unique(c(accepted, paste(state, collapse = ".")))
+    if (attempts > burnin && attempts %% thin == 0L && current_score > 0) {
+      tag <- paste(state, collapse = ".")
+      if (!(tag %in% accepted)) {
+        accepted <- c(accepted, tag)
+        accepted_scores <- c(accepted_scores, current_score)
+      }
+    }
   }
-  if (length(accepted) < n_fq) stop("Could not sample 50 distinct in-bounds FQ states; increase bounds or sampler budget.", call. = FALSE)
-  accepted[seq_len(n_fq)]
+  if (length(accepted) < n_fq) stop("Could not sample the requested number of distinct in-bounds FQ states; increase bounds or sampler budget.", call. = FALSE)
+  data.frame(
+    karyotype = accepted[seq_len(n_fq)],
+    x0_weight = accepted_scores[seq_len(n_fq)],
+    stringsAsFactors = FALSE
+  )
+}
+
+largest_remainder_allocate_alfak <- function(prob, total_size) {
+  if (!length(prob)) stop("`prob` must not be empty.", call. = FALSE)
+  if (any(!is.finite(prob)) || any(prob < 0)) stop("`prob` must contain finite non-negative values.", call. = FALSE)
+  if (sum(prob) <= 0) stop("`prob` must sum to a positive value.", call. = FALSE)
+  if (!is.finite(total_size) || total_size < 0 || total_size != floor(total_size)) stop("`total_size` must be a non-negative integer.", call. = FALSE)
+  original_names <- names(prob)
+  prob <- prob / sum(prob)
+  raw <- prob * total_size
+  counts <- floor(raw)
+  remaining <- total_size - sum(counts)
+  if (!is.finite(remaining) || remaining < 0 || remaining != floor(remaining) || remaining > length(prob)) {
+    stop("Internal error: largest remainder allocation produced an invalid remainder.", call. = FALSE)
+  }
+  if (remaining > 0) {
+    fractional <- raw - counts
+    order_idx <- order(-fractional, seq_along(fractional))
+    counts[order_idx[seq_len(remaining)]] <- counts[order_idx[seq_len(remaining)]] + 1
+  }
+  if (length(counts) != length(prob) || any(!is.finite(counts)) || any(counts < 0) ||
+      any(counts != floor(counts)) || sum(counts) != total_size) {
+    stop("Internal error: largest remainder allocation produced invalid integer-valued counts.", call. = FALSE)
+  }
+  if (!is.null(original_names)) names(counts) <- original_names
+  counts
+}
+
+prepare_initial_population_from_x0 <- function(x0, total_size) {
+  if (is.null(names(x0)) || any(!nzchar(names(x0)))) stop("`x0` must be a named numeric vector.", call. = FALSE)
+  if (anyDuplicated(names(x0))) stop("`x0` must not contain duplicate karyotypes.", call. = FALSE)
+  initial_counts <- largest_remainder_allocate_alfak(x0, total_size)
+  positive <- initial_counts > 0
+  if (!any(positive)) stop("Initial population for ABM is zero after filtering zero counts.", call. = FALSE)
+  positive_counts <- as.integer(initial_counts[positive])
+  names(positive_counts) <- names(initial_counts)[positive]
+  allocated_counts <- as.integer(initial_counts)
+  names(allocated_counts) <- names(initial_counts)
+  list(
+    tags = names(initial_counts)[positive],
+    counts = positive_counts,
+    x0 = x0 / sum(x0),
+    allocated_counts = allocated_counts
+  )
 }
 
 estimate_peak_reference <- function(landscape, seed, n_draws = 100000L) {
@@ -148,6 +205,7 @@ state_summary <- function(counts, landscape, peak_threshold) {
 
 write_initial_population <- function(landscape, results_landscape_dir) {
   initial_path <- file.path(results_landscape_dir, "initial_population.csv")
+  candidate_path <- file.path(results_landscape_dir, "initial_x0_candidates.csv")
   meta_path <- file.path(results_landscape_dir, "initialization.rds")
   landscape_number <- as.integer(sub(".*_", "", landscape$landscape_id))
   seed <- 710000L + landscape_number
@@ -160,27 +218,48 @@ write_initial_population <- function(landscape, results_landscape_dir) {
     seed = seed,
     n_cells = n_cells,
     n_frequent_karyotypes = n_frequent_karyotypes,
+    initial_population_method = "alfakR_prepare_abm_initial_population_largest_remainder",
+    x0_weight_method = "bounded-GRF Metropolis score: max(GRF fitness, eps) times Gaussian ploidy weight",
+    allocation_method = "alfakR_largest_remainder_allocate",
     target_ploidy = reference_mean_ploidy,
     ploidy_band = 0.35
   )
-  if (file.exists(initial_path) && file.exists(meta_path)) {
+  if (file.exists(initial_path) && file.exists(candidate_path) && file.exists(meta_path)) {
     existing <- readRDS(meta_path)
     if (provenance_matches(existing, expected_provenance)) return(invisible(NULL))
   }
-  fq_tags <- sample_initial_fq(landscape, n_frequent_karyotypes, seed = seed)
-  counts <- rep.int(n_cells %/% n_frequent_karyotypes, n_frequent_karyotypes)
-  counts[[1L]] <- counts[[1L]] + n_cells - sum(counts)
+  candidates <- sample_initial_fq(landscape, n_frequent_karyotypes, seed = seed)
+  x0 <- stats::setNames(candidates$x0_weight, candidates$karyotype)
+  allocated <- prepare_initial_population_from_x0(x0, n_cells)
+  counts <- allocated$counts
+  fq_tags <- allocated$tags
+  names(counts) <- fq_tags
   initial <- list(
-    counts = counts,
+    counts = unname(counts),
     tags = fq_tags,
-    sampler = list(method = "bounded-GRF Metropolis sample dispersed across 50 FQ states", n_fq = n_frequent_karyotypes,
+    x0 = allocated$x0,
+    x0_candidate_counts = allocated$allocated_counts,
+    sampler = list(method = "bounded-GRF Metropolis x0 candidate sample", n_fq = n_frequent_karyotypes,
+                   x0_weight_method = "bounded-GRF score times Gaussian ploidy weight",
+                   allocation_method = "alfakR largest_remainder_allocate with zero-count filtering",
                    target_ploidy = reference_mean_ploidy, ploidy_band = 0.35, model_version = model_version),
     provenance = expected_provenance
   )
+  candidate_k <- do.call(rbind, strsplit(candidates$karyotype, ".", fixed = TRUE))
+  storage.mode(candidate_k) <- "numeric"
+  candidate_fitness <- fitness_grf(candidate_k, landscape$centroids, landscape$lambda)
+  candidate_counts <- allocated$allocated_counts[candidates$karyotype]
+  write_csv_atomic(data.frame(karyotype = candidates$karyotype, x0_weight = candidates$x0_weight,
+                              x0_frequency = allocated$x0[candidates$karyotype],
+                              allocated_count = as.integer(candidate_counts),
+                              fitness = candidate_fitness,
+                              weighted_ploidy = weighted_ploidy(candidate_k)),
+                   candidate_path, row.names = FALSE)
   k <- do.call(rbind, strsplit(fq_tags, ".", fixed = TRUE))
   storage.mode(k) <- "numeric"
   fitness <- fitness_grf(k, landscape$centroids, landscape$lambda)
   write_csv_atomic(data.frame(karyotype = initial$tags, count = initial$counts, fitness = fitness,
+                              x0_frequency = allocated$x0[fq_tags],
                               weighted_ploidy = weighted_ploidy(k)), initial_path, row.names = FALSE)
   write_rds_atomic(initial, meta_path)
 }

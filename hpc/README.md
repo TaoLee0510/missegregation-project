@@ -19,29 +19,34 @@ Generate the two shared prerequisites once:
 
 ```sh
 Rscript 01_reference_ploidy/01_derive_reference_ploidy.R "$PROJECT_DIR"
-Rscript 02_landscape_generation/02_generate_landscapes.R "$PROJECT_DIR"
+Rscript 02_landscape_generation/02_generate_landscapes.R "$PROJECT_DIR" 200
 ```
 
-Submit the ABM as one independent array element per landscape. Each element
-runs 200 rate/replicate combinations (20 rates × 10 replicates) using the
-CPUs allocated to it.
+The second command accepts the landscape count as its second argument. It
+also writes `data/landscapes/grf_generation_parameters.csv`, which records
+the exact GRF lambda, seeds, fixed settings, file digests, and centroid
+coordinates for every generated landscape.
+
+Submit the phase-1 ABM as one independent array element per ABM simulation:
+one landscape, one phase-1 missegregation rate, and one replicate.
 
 ```sh
-sbatch hpc/run_abm_array.sbatch
+n_landscapes=$(Rscript -e 'cat(nrow(read.csv("data/landscapes/manifest.csv", stringsAsFactors = FALSE)))')
+phase1_tasks=$(( n_landscapes * 20 * 10 ))
+sbatch --array=1-${phase1_tasks} hpc/run_abm_array.sbatch
 ```
 
 Wait for every ABM element to succeed. A failed simulation or fit returns a
 non-zero exit code, so Slurm records the element as failed. Per-landscape
 status files are written under `outputs/bounded_grf/`.
 
-Afterward, count the observations and submit 100 fits per array element. The
-full phase-1 experiment has 40,000 fits, therefore 400 inference jobs.
+Afterward, count the observations and submit 100 fits per array element.
 
 ```sh
 n=$(find outputs/bounded_grf -name abm_observations.rds | wc -l)
 tasks=$(( (n + 99) / 100 ))
-test "$n" -eq 40000 || { echo "Expected 40000 phase-1 observations, found $n"; exit 1; }
-test "$tasks" -eq 400 && sbatch hpc/run_inference_array.sbatch
+test "$n" -eq "$phase1_tasks" || { echo "Expected ${phase1_tasks} phase-1 observations, found $n"; exit 1; }
+sbatch --array=1-${tasks} hpc/run_inference_array.sbatch
 ```
 
 Update the `#SBATCH` time and memory directives after a one-landscape ABM
@@ -52,12 +57,22 @@ shared output writes: each array element owns a landscape or inference result.
 
 For every original landscape, the second phase forms a 20 × 20 grid of
 `p_mis_phase1` and `p_mis_phase2`. The 10 phase-1 replicate lineages are
-continued, yielding 200 × 20 × 20 × 10 = 800,000 phase-2 trajectories. Each
-phase-2 array element owns one landscape and one phase-1 rate, so it runs 200
-trajectories (10 replicates × 20 phase-2 rates).
+continued, yielding `n_landscapes × 20 × 20 × 10` phase-2 trajectories. Each
+phase-2 array element owns one ABM simulation: one landscape, one phase-1
+rate, one inherited replicate, and one phase-2 rate. If the resulting task
+count exceeds the cluster MaxArraySize, submit chunks with `TASK_OFFSET`.
 
 ```sh
-sbatch hpc/run_phase2_abm_array.sbatch
+n_rates=$(Rscript -e 'cat(nrow(read.csv("outputs/bounded_grf/p_mis_lhs.csv", stringsAsFactors = FALSE)))')
+phase2_tasks=$(( n_landscapes * n_rates * 10 * n_rates ))
+max_array_tasks=100000
+offset=0
+while [ "$offset" -lt "$phase2_tasks" ]; do
+  chunk=$(( phase2_tasks - offset ))
+  if [ "$chunk" -gt "$max_array_tasks" ]; then chunk=$max_array_tasks; fi
+  sbatch --array=1-${chunk} --export=ALL,TASK_OFFSET=${offset} hpc/run_phase2_abm_array.sbatch
+  offset=$(( offset + chunk ))
+done
 ```
 
 Phase-2 inference is batched at 100 fits per element to avoid scheduler array
@@ -67,14 +82,14 @@ corresponding number of batches.
 ```sh
 n=$(find outputs/phase2_abm -name abm_observations.rds | wc -l)
 tasks=$(( (n + 99) / 100 ))
-test "$n" -eq 800000 || { echo "Expected 800000 phase-2 observations, found $n"; exit 1; }
-test "$tasks" -eq 8000 && sbatch hpc/run_phase2_inference_array.sbatch
+test "$n" -eq "$phase2_tasks" || { echo "Expected ${phase2_tasks} phase-2 observations, found $n"; exit 1; }
+sbatch --array=1-${tasks} hpc/run_phase2_inference_array.sbatch
 ```
 
-After all 800,000 phase-2 fits succeed, compute topology in 200 bounded tasks,
+After all phase-2 fits succeed, compute topology in one task per landscape,
 then build the figures from their compact CSV shards.
 
 ```sh
-sbatch hpc/run_phase2_topology_array.sbatch
+sbatch --array=1-${n_landscapes} hpc/run_phase2_topology_array.sbatch
 Rscript 08_phase2_visualization/08_make_phase2_figures.R "$PROJECT_DIR"
 ```

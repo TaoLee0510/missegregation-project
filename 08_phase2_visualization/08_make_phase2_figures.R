@@ -10,13 +10,17 @@ if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Package 'ggplot2' is req
 source(file.path(project_dir, "R", "project_helpers.R"))
 
 parameters <- read_phase1_parameters(project_dir)
-landscape_ids <- sprintf("landscape_%02d", seq_len(200L))
+manifest <- read.csv(file.path(project_dir, "data", "landscapes", "manifest.csv"), stringsAsFactors = FALSE)
+if (!all(c("landscape_id") %in% names(manifest)) || !nrow(manifest)) stop("Invalid or empty landscape manifest.", call. = FALSE)
+landscape_ids <- manifest$landscape_id
 expected <- do.call(rbind, lapply(landscape_ids, function(landscape_id) expected_phase2_grid(parameters, landscape_id)))
-expected_rows_per_landscape <- nrow(expected_phase2_grid(parameters, "landscape_01"))
+expected_rows_per_landscape <- nrow(expected_phase2_grid(parameters, landscape_ids[[1L]]))
 
 read_shards <- function(pattern, label) {
   paths <- sort(Sys.glob(file.path(topology_dir, pattern)))
-  if (length(paths) != 200L) stop("Expected 200 topology shards matching ", pattern, "; found ", length(paths), call. = FALSE)
+  if (length(paths) != length(landscape_ids)) {
+    stop(sprintf("Expected %d topology shards matching %s; found %d.", length(landscape_ids), pattern, length(paths)), call. = FALSE)
+  }
   shards <- lapply(paths, read.csv, stringsAsFactors = FALSE)
   shard_rows <- vapply(shards, nrow, integer(1))
   bad <- which(shard_rows != expected_rows_per_landscape)

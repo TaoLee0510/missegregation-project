@@ -6,7 +6,6 @@
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args)) normalizePath(args[[1]]) else getwd()
 landscape_index <- if (length(args) >= 2L) as.integer(args[[2]]) else NA_integer_
-if (is.na(landscape_index) || !is.finite(landscape_index) || landscape_index < 1L || landscape_index > 200L) stop("Run one landscape index (1-200) per task.", call. = FALSE)
 if (!requireNamespace("igraph", quietly = TRUE)) stop("Package 'igraph' is required.", call. = FALSE)
 source(file.path(project_dir, "R", "project_helpers.R"))
 
@@ -15,6 +14,11 @@ phase2_fit_root <- file.path(project_dir, "outputs", "phase2_alfak_inference")
 phase2_abm_root <- file.path(project_dir, "outputs", "phase2_abm")
 out_dir <- file.path(project_dir, "outputs", "phase2_topology")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+manifest <- read.csv(file.path(project_dir, "data", "landscapes", "manifest.csv"), stringsAsFactors = FALSE)
+if (!all(c("landscape_id") %in% names(manifest))) stop("Invalid landscape manifest.", call. = FALSE)
+if (is.na(landscape_index) || !is.finite(landscape_index) || landscape_index < 1L || landscape_index > nrow(manifest)) {
+  stop(sprintf("Run one landscape index (1-%d) per task.", nrow(manifest)), call. = FALSE)
+}
 
 parse_karyotypes <- function(tags) {
   x <- do.call(rbind, strsplit(tags, ".", fixed = TRUE))
@@ -66,7 +70,7 @@ clean_map <- function(x, path) {
   x
 }
 
-landscape_id <- sprintf("landscape_%02d", landscape_index)
+landscape_id <- manifest$landscape_id[[landscape_index]]
 truth <- readRDS(file.path(project_dir, "data", "landscapes", paste0(landscape_id, ".rds")))
 parameters <- read_phase1_parameters(project_dir)
 expected <- expected_phase2_grid(parameters, landscape_id)

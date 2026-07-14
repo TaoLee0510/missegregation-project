@@ -1,6 +1,6 @@
 # Phase-2 inferred-landscape experiment
 
-For landscape `L = 1, …, 200`, phase-1 rate index `i = 1, …, 20`,
+For each landscape listed in `data/landscapes/manifest.csv`, phase-1 rate index `i = 1, …, 20`,
 phase-2 rate index `j = 1, …, 20`, and matched replicate `r = 1, …, 10`,
 the phase-2 trajectory is
 
@@ -10,7 +10,7 @@ the phase-2 trajectory is
 phase-1 trajectory. The design is therefore a 20 × 20 rate-pair matrix per
 original landscape, with 10 matched replicate lineages in every cell:
 
-`200 × 20 × 20 × 10 = 800,000` phase-2 trajectories.
+`n_landscapes × 20 × 20 × 10` phase-2 trajectories.
 
 Phase-1 ALFA-K fitting includes every karyotype present at that replicate's
 endpoint, using its full recorded trajectory. The phase-2 starting population
