@@ -102,6 +102,11 @@ read_abm_missegregation_rate <- function(observation_path) {
   rate
 }
 
+run_alfak_abm <- function(...) {
+  fn <- get("run_karyotype_abm", envir = asNamespace("alfakR"), inherits = FALSE)
+  fn(...)
+}
+
 bind_status <- function(rows) {
   columns <- unique(unlist(lapply(rows, names), use.names = FALSE))
   do.call(rbind, lapply(rows, function(x) {

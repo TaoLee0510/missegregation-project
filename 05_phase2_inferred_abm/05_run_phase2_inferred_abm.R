@@ -160,7 +160,7 @@ run_task <- function(task) {
     write_rds_atomic(source$initial, initial_path)
   }
   seed <- 1200000L + as.integer(sub(".*_", "", task$landscape_id)) * 100000L + task$p1$p_index * 1000L + task$replicate_id * 100L + task$p2$p_index
-  raw <- alfakR::run_karyotype_abm(
+  raw <- run_alfak_abm(
     initial_population_r = stats::setNames(as.list(source$initial$counts), source$initial$tags),
     fitness_map_r = source$fitness_map, p_missegregation = task$p2$p_mis,
     dt = dt, n_steps = n_steps, max_population_size = n_cells,

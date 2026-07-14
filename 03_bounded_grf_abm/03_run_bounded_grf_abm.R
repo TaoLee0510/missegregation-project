@@ -305,7 +305,7 @@ run_task <- function(task) {
   peak_max <- peak_reference$estimated_domain_max_fitness
   peak_threshold <- peak_reference$peak_threshold
   seed <- 910000L + as.integer(sub(".*_", "", task$landscape_id)) * 1000L + task$p_index * 10L + task$replicate_id
-  raw <- alfakR::run_karyotype_abm(
+  raw <- run_alfak_abm(
     initial_population_r = as.list(initial_counts),
     fitness_map_r = stats::setNames(list(), character(0)),
     p_missegregation = task$p_mis,
