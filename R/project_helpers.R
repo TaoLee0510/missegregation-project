@@ -74,6 +74,25 @@ prepare_terminal_input <- function(observation_path) {
   list(yi = list(x = observed$x[terminal, , drop = FALSE], dt = observed$dt), passage_times = observed$passage_times, terminal = terminal)
 }
 
+read_abm_missegregation_rate <- function(observation_path) {
+  metadata_path <- file.path(dirname(observation_path), "run_metadata.rds")
+  if (!file.exists(metadata_path)) stop("ABM run metadata is missing for ", observation_path, call. = FALSE)
+  metadata <- readRDS(metadata_path)
+  candidates <- list(
+    if (!is.null(metadata$p_mis_phase2)) metadata$p_mis_phase2 else NULL,
+    if (is.list(metadata$task) && !is.null(metadata$task$p_mis)) metadata$task$p_mis else NULL,
+    if (is.list(metadata$provenance) && is.list(metadata$provenance$task) && !is.null(metadata$provenance$task$p_mis_phase2)) metadata$provenance$task$p_mis_phase2 else NULL,
+    if (is.list(metadata$provenance) && is.list(metadata$provenance$task) && !is.null(metadata$provenance$task$p_mis)) metadata$provenance$task$p_mis else NULL
+  )
+  candidates <- Filter(Negate(is.null), candidates)
+  if (!length(candidates)) stop("ABM missegregation rate is missing from ", metadata_path, call. = FALSE)
+  rate <- as.numeric(candidates[[1L]])[[1L]]
+  if (!is.finite(rate) || rate < 0 || rate > 1) {
+    stop("Invalid ABM missegregation rate in ", metadata_path, call. = FALSE)
+  }
+  rate
+}
+
 bind_status <- function(rows) {
   columns <- unique(unlist(lapply(rows, names), use.names = FALSE))
   do.call(rbind, lapply(rows, function(x) {

@@ -37,6 +37,7 @@ fit_one <- function(observation_path) {
   out_dir <- file.path(out_root, relative)
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
   final_path <- file.path(replicate_dir, "final_karyotypes.csv")
+  abm_pm <- read_abm_missegregation_rate(observation_path)
   expected_provenance <- list(
     fit_mode = "all_terminal_karyotypes_v1",
     observation_digest = file_digest(observation_path),
@@ -45,7 +46,7 @@ fit_one <- function(observation_path) {
     minobs = 1L,
     n0 = 1e4,
     nb = 1e4,
-    pm = 5e-05
+    pm = abm_pm
   )
   if (file.exists(metadata_path)) {
     previous <- readRDS(metadata_path)
@@ -57,11 +58,11 @@ fit_one <- function(observation_path) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   tryCatch({
     alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times,
-          minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = 5e-05,
+          minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
           landscape_data_output = FALSE)
     saveRDS(list(observation_path = observation_path, fit_mode = "all_terminal_karyotypes_v1",
                  n_terminal_karyotypes = length(prepared$terminal), terminal_karyotypes = prepared$terminal, nboot = nboot,
-                 passage_times = prepared$passage_times, n0 = 1e4, nb = 1e4,
+                 passage_times = prepared$passage_times, n0 = 1e4, nb = 1e4, pm = abm_pm,
                  provenance = expected_provenance),
             file.path(out_dir, "fit_metadata.rds"))
     data.frame(status = "completed", observation = relative)
