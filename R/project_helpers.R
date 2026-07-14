@@ -36,6 +36,30 @@ write_csv_atomic <- function(object, path, ...) {
   invisible(path)
 }
 
+load_project_alfak <- function(project_dir) {
+  source_path <- Sys.getenv("ALFAKR_SOURCE", unset = "")
+  if (!nzchar(source_path)) {
+    suppressPackageStartupMessages(library(alfakR))
+    return(invisible("installed"))
+  }
+  source_path <- normalizePath(source_path, mustWork = TRUE)
+  if (!requireNamespace("pkgload", quietly = TRUE)) {
+    stop("Package 'pkgload' is required when ALFAKR_SOURCE is set.", call. = FALSE)
+  }
+  compile <- tolower(Sys.getenv("ALFAKR_COMPILE", unset = "false")) %in% c("1", "true", "yes")
+  if (!compile) {
+    dll_path <- file.path(source_path, "src", paste0("alfakR", .Platform$dynlib.ext))
+    if (!file.exists(dll_path)) {
+      stop("Compiled repo alfakR DLL is missing: ", dll_path,
+           "\nRun once before submitting: ALFAKR_SOURCE=/path/to/packages/alfakR ALFAKR_COMPILE=true Rscript -e 'source(\"R/project_helpers.R\"); load_project_alfak(getwd())'",
+           call. = FALSE)
+    }
+  }
+  pkgload::load_all(source_path, compile = compile, quiet = TRUE, export_all = FALSE,
+                    helpers = FALSE, attach_testthat = FALSE)
+  invisible(source_path)
+}
+
 provenance_matches <- function(previous, expected) {
   is.list(previous) && is.list(previous$provenance) && identical(previous$provenance, expected)
 }

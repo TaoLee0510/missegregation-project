@@ -24,8 +24,8 @@ if (!is.na(p1_index) && (!is.finite(p1_index) || p1_index < 1L)) stop("`p1_index
 if (!is.na(replicate_filter) && (!is.finite(replicate_filter) || replicate_filter < 1L)) stop("`replicate_id` must be positive.", call. = FALSE)
 if (!is.na(p2_index) && (!is.finite(p2_index) || p2_index < 1L)) stop("`p2_index` must be positive.", call. = FALSE)
 if (!is.finite(n_steps) || n_steps < 0L) stop("`n_steps` must be a non-negative integer.", call. = FALSE)
-library(alfakR)
 source(file.path(project_dir, "R", "project_helpers.R"))
+load_project_alfak(project_dir)
 
 phase1_root <- file.path(project_dir, "outputs", "bounded_grf")
 phase1_fit_root <- file.path(project_dir, "outputs", "alfak_inference")

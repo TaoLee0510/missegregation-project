@@ -9,8 +9,8 @@ nboot <- if (length(args) >= 3L) as.integer(args[[3]]) else 45L
 fit_start <- if (length(args) >= 4L) as.integer(args[[4]]) else NA_integer_
 fit_count <- if (length(args) >= 5L) as.integer(args[[5]]) else 1L
 if (!is.finite(workers) || workers < 1L || !is.finite(nboot) || nboot < 1L) stop("Invalid workers or nboot.", call. = FALSE)
-library(alfakR)
 source(file.path(project_dir, "R", "project_helpers.R"))
+load_project_alfak(project_dir)
 
 abm_root <- file.path(project_dir, "outputs", "phase2_abm")
 out_root <- file.path(project_dir, "outputs", "phase2_alfak_inference")

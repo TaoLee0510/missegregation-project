@@ -18,11 +18,11 @@ if (!is.na(landscape_index) && (!is.finite(landscape_index) || landscape_index <
 if (!is.na(p_index_filter) && (!is.finite(p_index_filter) || p_index_filter < 1L)) {
   stop("`p_index` must be a positive integer.", call. = FALSE)
 }
+source(file.path(project_dir, "R", "project_helpers.R"))
+load_project_alfak(project_dir)
 if (!is.na(replicate_filter) && (!is.finite(replicate_filter) || replicate_filter < 1L)) {
   stop("`replicate_id` must be a positive integer.", call. = FALSE)
 }
-library(alfakR)
-source(file.path(project_dir, "R", "project_helpers.R"))
 
 landscape_dir <- file.path(project_dir, "data", "landscapes")
 reference <- readRDS(file.path(project_dir, "data", "reference_ploidy", "reference_ploidy.rds"))

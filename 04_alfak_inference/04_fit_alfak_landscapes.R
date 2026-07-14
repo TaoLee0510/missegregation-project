@@ -17,8 +17,8 @@ if (!is.na(fit_start) && (!is.finite(fit_start) || fit_start < 1L)) {
 if (!is.finite(fit_count) || fit_count < 1L) {
   stop("`fit_count` must be a positive integer.", call. = FALSE)
 }
-library(alfakR)
 source(file.path(project_dir, "R", "project_helpers.R"))
+load_project_alfak(project_dir)
 
 abm_dir <- file.path(project_dir, "outputs", "bounded_grf")
 out_root <- file.path(project_dir, "outputs", "alfak_inference")
