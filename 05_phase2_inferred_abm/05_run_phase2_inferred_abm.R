@@ -24,6 +24,8 @@ p_mis_path <- file.path(phase1_root, "p_mis_lhs.csv")
 parameters <- read.csv(p_mis_path, stringsAsFactors = FALSE)
 if (!all(c("p_index", "p_mis") %in% names(parameters))) stop("Invalid phase-1 p_mis_lhs.csv.", call. = FALSE)
 parameters <- parameters[order(parameters$p_index), ]
+phase1_parameters <- parameters
+phase2_parameters <- parameters
 p_mis_lhs_digest <- file_digest(p_mis_path)
 n_replicates <- 10L
 n_cells <- 10000L
@@ -91,13 +93,13 @@ if (!is.na(landscape_index)) {
   manifest <- manifest[landscape_index, , drop = FALSE]
 }
 if (!is.na(p1_index)) {
-  if (p1_index > nrow(parameters)) stop("`p1_index` exceeds the p_mis table.", call. = FALSE)
-  parameters <- parameters[p1_index, , drop = FALSE]
+  if (p1_index > nrow(phase1_parameters)) stop("`p1_index` exceeds the p_mis table.", call. = FALSE)
+  phase1_parameters <- phase1_parameters[p1_index, , drop = FALSE]
 }
 
 tasks <- list()
-for (landscape_id in manifest$landscape_id) for (i in seq_len(nrow(parameters))) for (replicate_id in seq_len(n_replicates)) for (p2_index in seq_len(nrow(parameters))) {
-  tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p1 = parameters[i, ], replicate_id = replicate_id, p2 = parameters[p2_index, ])
+for (landscape_id in manifest$landscape_id) for (i in seq_len(nrow(phase1_parameters))) for (replicate_id in seq_len(n_replicates)) for (p2_index in seq_len(nrow(phase2_parameters))) {
+  tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p1 = phase1_parameters[i, ], replicate_id = replicate_id, p2 = phase2_parameters[p2_index, ])
 }
 
 run_task <- function(task) {
@@ -121,6 +123,7 @@ run_task <- function(task) {
       replicate_id = task$replicate_id
     ),
     p_mis_lhs_digest = p_mis_lhs_digest,
+    phase2_parameter_count = nrow(phase2_parameters),
     source_final_digest = file_digest(paths$final_path),
     source_inferred_digest = file_digest(paths$inferred_path),
     n_cells = n_cells,
