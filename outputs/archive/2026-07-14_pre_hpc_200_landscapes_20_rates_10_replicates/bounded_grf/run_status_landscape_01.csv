@@ -1,0 +1,16 @@
+"status","landscape_id","p_index","p_mis","replicate_id","final_population","final_diversity","final_peak_percent"
+"completed","landscape_01",1,0.00025,1,10316,60,0
+"completed","landscape_01",1,0.00025,2,10302,58,0
+"completed","landscape_01",1,0.00025,3,10335,61,0
+"completed","landscape_01",2,0.00268408197856043,1,10297,126,0
+"completed","landscape_01",2,0.00268408197856043,2,10311,137,0
+"completed","landscape_01",2,0.00268408197856043,3,10359,145,0
+"completed","landscape_01",3,0.00513797160410322,1,10297,195,0
+"completed","landscape_01",3,0.00513797160410322,2,10295,190,0
+"completed","landscape_01",3,0.00513797160410322,3,10319,196,0
+"completed","landscape_01",4,0.00644100280404091,1,10321,249,0
+"completed","landscape_01",4,0.00644100280404091,2,10305,203,0
+"completed","landscape_01",4,0.00644100280404091,3,10299,251,0
+"completed","landscape_01",5,0.01,1,10322,329,0
+"completed","landscape_01",5,0.01,2,10269,272,0
+"completed","landscape_01",5,0.01,3,10336,318,0
