@@ -18,7 +18,9 @@ source(file.path(project_dir, "R", "project_helpers.R"))
 
 landscape_dir <- file.path(project_dir, "data", "landscapes")
 reference <- readRDS(file.path(project_dir, "data", "reference_ploidy", "reference_ploidy.rds"))
+reference_digest <- object_digest(reference)
 bound_profile <- reference$bound_profile
+bound_profile_digest <- object_digest(bound_profile)
 lower_copy_numbers <- as.integer(bound_profile$lower_copy_number)
 upper_copy_numbers <- as.integer(bound_profile$upper_copy_number)
 reference_mean_ploidy <- reference$reference_mean_ploidy
@@ -38,6 +40,15 @@ n_p_mis <- 20L
 n_frequent_karyotypes <- 50L
 diploid_tag <- paste(rep.int(2L, 22L), collapse = ".")
 model_version <- "bounded_grf_v5_no_diploid_state"
+landscape_digest_cache <- new.env(parent = emptyenv())
+
+landscape_digest <- function(landscape_id) {
+  if (!exists(landscape_id, envir = landscape_digest_cache, inherits = FALSE)) {
+    assign(landscape_id, file_digest(file.path(landscape_dir, paste0(landscape_id, ".rds"))),
+           envir = landscape_digest_cache)
+  }
+  get(landscape_id, envir = landscape_digest_cache, inherits = FALSE)
+}
 
 fitness_grf <- function(karyotypes, centroids, lambda) {
   karyotypes <- as.matrix(karyotypes)
@@ -121,19 +132,33 @@ state_summary <- function(counts, landscape, peak_threshold) {
 write_initial_population <- function(landscape, results_landscape_dir) {
   initial_path <- file.path(results_landscape_dir, "initial_population.csv")
   meta_path <- file.path(results_landscape_dir, "initialization.rds")
+  landscape_number <- as.integer(sub(".*_", "", landscape$landscape_id))
+  seed <- 710000L + landscape_number
+  expected_provenance <- list(
+    model_version = model_version,
+    landscape_id = landscape$landscape_id,
+    landscape_digest = landscape_digest(landscape$landscape_id),
+    reference_digest = reference_digest,
+    bound_profile_digest = bound_profile_digest,
+    seed = seed,
+    n_cells = n_cells,
+    n_frequent_karyotypes = n_frequent_karyotypes,
+    target_ploidy = reference_mean_ploidy,
+    ploidy_band = 0.35
+  )
   if (file.exists(initial_path) && file.exists(meta_path)) {
     existing <- readRDS(meta_path)
-    if (identical(existing$sampler$model_version, model_version)) return(invisible(NULL))
+    if (provenance_matches(existing, expected_provenance)) return(invisible(NULL))
   }
-  landscape_number <- as.integer(sub(".*_", "", landscape$landscape_id))
-  fq_tags <- sample_initial_fq(landscape, n_frequent_karyotypes, seed = 710000L + landscape_number)
+  fq_tags <- sample_initial_fq(landscape, n_frequent_karyotypes, seed = seed)
   counts <- rep.int(n_cells %/% n_frequent_karyotypes, n_frequent_karyotypes)
   counts[[1L]] <- counts[[1L]] + n_cells - sum(counts)
   initial <- list(
     counts = counts,
     tags = fq_tags,
     sampler = list(method = "bounded-GRF Metropolis sample dispersed across 50 FQ states", n_fq = n_frequent_karyotypes,
-                   target_ploidy = reference_mean_ploidy, ploidy_band = 0.35, model_version = model_version)
+                   target_ploidy = reference_mean_ploidy, ploidy_band = 0.35, model_version = model_version),
+    provenance = expected_provenance
   )
   k <- do.call(rbind, strsplit(fq_tags, ".", fixed = TRUE))
   storage.mode(k) <- "numeric"
@@ -149,11 +174,26 @@ prepare_landscape <- function(landscape_id) {
   dir.create(landscape_result_dir, recursive = TRUE, showWarnings = FALSE)
   write_initial_population(landscape, landscape_result_dir)
   peak_path <- file.path(landscape_result_dir, "peak_reference.rds")
-  if (!file.exists(peak_path)) {
-    peak_max <- estimate_peak_reference(landscape, seed = 810000L + as.integer(sub(".*_", "", landscape_id)))
-    saveRDS(list(estimated_domain_max_fitness = peak_max, peak_threshold = 0.95 * peak_max,
-                 domain = "empirical chromosome-specific bounded GRF", n_uniform_draws = 100000L), peak_path)
+  peak_seed <- 810000L + as.integer(sub(".*_", "", landscape_id))
+  peak_n_draws <- 100000L
+  peak_provenance <- list(
+    model_version = "peak_reference_v1",
+    landscape_id = landscape_id,
+    landscape_digest = landscape_digest(landscape_id),
+    reference_digest = reference_digest,
+    bound_profile_digest = bound_profile_digest,
+    seed = peak_seed,
+    n_uniform_draws = peak_n_draws,
+    threshold_fraction = 0.95
+  )
+  if (file.exists(peak_path)) {
+    existing <- readRDS(peak_path)
+    if (provenance_matches(existing, peak_provenance)) return(invisible(NULL))
   }
+  peak_max <- estimate_peak_reference(landscape, seed = peak_seed, n_draws = peak_n_draws)
+  saveRDS(list(estimated_domain_max_fitness = peak_max, peak_threshold = 0.95 * peak_max,
+               domain = "empirical chromosome-specific bounded GRF", n_uniform_draws = peak_n_draws,
+               provenance = peak_provenance), peak_path)
 }
 
 manifest <- read.csv(file.path(landscape_dir, "manifest.csv"), stringsAsFactors = FALSE)
@@ -174,7 +214,17 @@ if (!file.exists(param_path)) {
   if (!file.rename(param_tmp, param_path) && !file.exists(param_path)) {
     stop("Could not create p_mis_lhs.csv.", call. = FALSE)
   }
+} else {
+  existing_param <- read.csv(param_path, stringsAsFactors = FALSE)
+  invalid_param <- !all(names(param_table) %in% names(existing_param)) ||
+    nrow(existing_param) != nrow(param_table) ||
+    !identical(as.integer(existing_param$p_index), as.integer(param_table$p_index)) ||
+    !isTRUE(all.equal(existing_param$p_mis, param_table$p_mis, tolerance = 1e-12, check.attributes = FALSE))
+  if (invalid_param) {
+    stop("Existing p_mis_lhs.csv does not match the current deterministic p_mis table.", call. = FALSE)
+  }
 }
+p_mis_lhs_digest <- file_digest(param_path)
 
 tasks <- list()
 for (landscape_id in manifest$landscape_id) {
@@ -200,9 +250,25 @@ run_task <- function(task) {
   summary_path <- file.path(replicate_dir, "trajectory_summary.csv")
   observations_path <- file.path(replicate_dir, "abm_observations.rds")
   metadata_path <- file.path(replicate_dir, "run_metadata.rds")
+  initial_path <- file.path(landscape_result_dir, "initialization.rds")
+  expected_provenance <- list(
+    model_version = model_version,
+    task = task,
+    landscape_digest = landscape_digest(task$landscape_id),
+    reference_digest = reference_digest,
+    bound_profile_digest = bound_profile_digest,
+    p_mis_lhs_digest = p_mis_lhs_digest,
+    initialization_digest = file_digest(initial_path),
+    n_cells = n_cells,
+    n_steps = n_steps,
+    dt = dt,
+    record_interval = record_interval,
+    culling_survival_fraction = 0.999,
+    excluded_karyotypes = diploid_tag
+  )
   if (file.exists(final_path) && file.exists(summary_path) && file.exists(observations_path) && file.exists(metadata_path)) {
     previous <- readRDS(metadata_path)
-    if (identical(previous$n_steps, n_steps) && identical(previous$model_version, model_version)) return(data.frame(status = "skipped", task))
+    if (provenance_matches(previous, expected_provenance)) return(data.frame(status = "skipped", task))
   }
 
   peak_reference <- readRDS(file.path(landscape_result_dir, "peak_reference.rds"))
@@ -246,7 +312,8 @@ run_task <- function(task) {
                fitness_mode = "full GRF evaluated on every in-bounds karyotype",
                excluded_karyotypes = diploid_tag,
                bounds = bound_profile, reference_mean_ploidy = reference_mean_ploidy,
-               boundary_rejections = boundary_rejections, model_version = model_version),
+               boundary_rejections = boundary_rejections, model_version = model_version,
+               provenance = expected_provenance),
           metadata_path)
   data.frame(status = "completed", task,
              final_population = tail(summaries$population, 1L),

@@ -8,6 +8,7 @@ project_dir <- if (length(args)) normalizePath(args[[1]]) else getwd()
 landscape_index <- if (length(args) >= 2L) as.integer(args[[2]]) else NA_integer_
 if (is.na(landscape_index) || !is.finite(landscape_index) || landscape_index < 1L || landscape_index > 200L) stop("Run one landscape index (1-200) per task.", call. = FALSE)
 if (!requireNamespace("igraph", quietly = TRUE)) stop("Package 'igraph' is required.", call. = FALSE)
+source(file.path(project_dir, "R", "project_helpers.R"))
 
 phase1_fit_root <- file.path(project_dir, "outputs", "alfak_inference")
 phase2_fit_root <- file.path(project_dir, "outputs", "phase2_alfak_inference")
@@ -67,13 +68,22 @@ clean_map <- function(x, path) {
 
 landscape_id <- sprintf("landscape_%02d", landscape_index)
 truth <- readRDS(file.path(project_dir, "data", "landscapes", paste0(landscape_id, ".rds")))
-paths <- sort(Sys.glob(file.path(phase2_fit_root, landscape_id, "p_mis_*", "replicate_*", "p_mis_*", "landscape.Rds")))
-if (!length(paths)) stop("No phase-2 inferred landscapes found for ", landscape_id, call. = FALSE)
+parameters <- read_phase1_parameters(project_dir)
+expected <- expected_phase2_grid(parameters, landscape_id)
+paths <- file.path(phase2_fit_root, expected$relative, "landscape.Rds")
+phase2_final_paths <- file.path(phase2_abm_root, expected$relative, "final_karyotypes.csv")
+phase1_expected <- unique(expected[, c("landscape_id", "p1_dir", "replicate_id")])
+phase1_paths <- file.path(phase1_fit_root, phase1_expected$landscape_id, phase1_expected$p1_dir, phase1_expected$replicate_id, "landscape.Rds")
+stop_if_missing_files(paths, paste0(landscape_id, " phase-2 inferred landscape"))
+stop_if_missing_files(phase2_final_paths, paste0(landscape_id, " phase-2 final population"))
+stop_if_missing_files(phase1_paths, paste0(landscape_id, " phase-1 inferred landscape"))
 metric_rows <- list(); summary_rows <- list()
-for (path in paths) {
-  relative <- sub(paste0("^", phase2_fit_root, "/"), "", dirname(path))
-  bits <- strsplit(relative, "/", fixed = TRUE)[[1]]
-  p1_dir <- bits[[2]]; replicate_id <- bits[[3]]; p2_dir <- bits[[4]]
+for (i in seq_along(paths)) {
+  path <- paths[[i]]
+  relative <- expected$relative[[i]]
+  p1_dir <- expected$p1_dir[[i]]
+  replicate_id <- expected$replicate_id[[i]]
+  p2_dir <- expected$p2_dir[[i]]
   phase2 <- clean_map(readRDS(path), path)
   phase1_path <- file.path(phase1_fit_root, landscape_id, p1_dir, replicate_id, "landscape.Rds")
   phase1 <- clean_map(readRDS(phase1_path), phase1_path)
@@ -103,15 +113,16 @@ for (path in paths) {
       phase1_phase2_shared_rmse = if (length(shared)) sqrt(mean((p1_fit_shared - p2_fit_shared)^2)) else NA_real_
     ))
   metric_rows[[relative]] <- as.data.frame(row, stringsAsFactors = FALSE)
-  final_path <- file.path(phase2_abm_root, relative, "final_karyotypes.csv")
-  if (file.exists(final_path)) {
-    final <- read.csv(final_path, stringsAsFactors = FALSE)
-    original_fitness <- grf_fitness(final$karyotype, truth)
-    summary_rows[[relative]] <- data.frame(landscape_id, p1_dir, replicate_id, p2_dir,
-      terminal_population = sum(final$count), terminal_diversity = sum(final$count > 0),
-      mean_source_inferred_fitness = stats::weighted.mean(final$fitness, final$count),
-      mean_original_grf_fitness = stats::weighted.mean(original_fitness, final$count))
-  }
+  final <- read.csv(phase2_final_paths[[i]], stringsAsFactors = FALSE)
+  original_fitness <- grf_fitness(final$karyotype, truth)
+  summary_rows[[relative]] <- data.frame(landscape_id, p1_dir, replicate_id, p2_dir,
+    terminal_population = sum(final$count), terminal_diversity = sum(final$count > 0),
+    mean_source_inferred_fitness = stats::weighted.mean(final$fitness, final$count),
+    mean_original_grf_fitness = stats::weighted.mean(original_fitness, final$count))
 }
-utils::write.csv(do.call(rbind, metric_rows), file.path(out_dir, sprintf("phase2_topology_metrics_%s.csv", landscape_id)), row.names = FALSE)
-utils::write.csv(do.call(rbind, summary_rows), file.path(out_dir, sprintf("phase2_terminal_fitness_%s.csv", landscape_id)), row.names = FALSE)
+metrics <- do.call(rbind, metric_rows)
+terminal <- do.call(rbind, summary_rows)
+validate_phase2_grid_rows(metrics, expected, paste0(landscape_id, " topology metrics"))
+validate_phase2_grid_rows(terminal, expected, paste0(landscape_id, " terminal fitness"))
+utils::write.csv(metrics, file.path(out_dir, sprintf("phase2_topology_metrics_%s.csv", landscape_id)), row.names = FALSE)
+utils::write.csv(terminal, file.path(out_dir, sprintf("phase2_terminal_fitness_%s.csv", landscape_id)), row.names = FALSE)

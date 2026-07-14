@@ -26,14 +26,25 @@ fit_one <- function(path) {
   relative <- sub(paste0("^", abm_root, "/"), "", dirname(path))
   out_dir <- file.path(out_root, relative)
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
+  final_path <- file.path(dirname(path), "final_karyotypes.csv")
+  expected_provenance <- list(
+    fit_mode = "all_terminal_karyotypes_v1",
+    observation_digest = file_digest(path),
+    final_population_digest = file_digest(final_path),
+    nboot = nboot,
+    minobs = 1L,
+    n0 = 1e4,
+    nb = 1e4,
+    pm = 5e-05
+  )
   if (file.exists(metadata_path)) {
     previous <- readRDS(metadata_path)
-    if (identical(previous$fit_mode, "all_terminal_karyotypes_v1") && identical(previous$nboot, nboot)) return(data.frame(status = "skipped", observation = relative))
+    if (provenance_matches(previous, expected_provenance)) return(data.frame(status = "skipped", observation = relative))
   }
   prepared <- prepare_terminal_input(path)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times, minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = 5e-05, landscape_data_output = FALSE)
-  saveRDS(list(observation_path = path, fit_mode = "all_terminal_karyotypes_v1", n_terminal_karyotypes = length(prepared$terminal), terminal_karyotypes = prepared$terminal, nboot = nboot), metadata_path)
+  saveRDS(list(observation_path = path, fit_mode = "all_terminal_karyotypes_v1", n_terminal_karyotypes = length(prepared$terminal), terminal_karyotypes = prepared$terminal, nboot = nboot, provenance = expected_provenance), metadata_path)
   data.frame(status = "completed", observation = relative)
 }
 safe_fit <- function(path) tryCatch(fit_one(path), error = function(e) data.frame(status = "failed", observation = sub(paste0("^", abm_root, "/"), "", dirname(path)), message = conditionMessage(e)))

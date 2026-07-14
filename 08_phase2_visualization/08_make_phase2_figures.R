@@ -7,15 +7,32 @@ topology_dir <- file.path(project_dir, "outputs", "phase2_topology")
 out_dir <- file.path(project_dir, "outputs", "phase2_figures")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Package 'ggplot2' is required.", call. = FALSE)
+source(file.path(project_dir, "R", "project_helpers.R"))
 
-read_shards <- function(pattern) {
+parameters <- read_phase1_parameters(project_dir)
+landscape_ids <- sprintf("landscape_%02d", seq_len(200L))
+expected <- do.call(rbind, lapply(landscape_ids, function(landscape_id) expected_phase2_grid(parameters, landscape_id)))
+expected_rows_per_landscape <- nrow(expected_phase2_grid(parameters, "landscape_01"))
+
+read_shards <- function(pattern, label) {
   paths <- sort(Sys.glob(file.path(topology_dir, pattern)))
   if (length(paths) != 200L) stop("Expected 200 topology shards matching ", pattern, "; found ", length(paths), call. = FALSE)
-  do.call(rbind, lapply(paths, read.csv, stringsAsFactors = FALSE))
+  shards <- lapply(paths, read.csv, stringsAsFactors = FALSE)
+  shard_rows <- vapply(shards, nrow, integer(1))
+  bad <- which(shard_rows != expected_rows_per_landscape)
+  if (length(bad)) {
+    stop(sprintf(
+      "%s has incomplete shard row counts. Expected %d rows per landscape; first bad shard %s has %d rows.",
+      label, expected_rows_per_landscape, basename(paths[[bad[[1L]]]]), shard_rows[[bad[[1L]]]]
+    ), call. = FALSE)
+  }
+  out <- do.call(rbind, shards)
+  validate_phase2_grid_rows(out, expected, label)
+  out
 }
 rate <- function(x) factor(sub("^p_mis_[0-9]+_", "", x), levels = sort(unique(sub("^p_mis_[0-9]+_", "", x))))
-metrics <- read_shards("phase2_topology_metrics_landscape_*.csv")
-terminal <- read_shards("phase2_terminal_fitness_landscape_*.csv")
+metrics <- read_shards("phase2_topology_metrics_landscape_*.csv", "phase2 topology metrics")
+terminal <- read_shards("phase2_terminal_fitness_landscape_*.csv", "phase2 terminal fitness")
 metrics$p_mis_phase1 <- rate(metrics$p1_dir); metrics$p_mis_phase2 <- rate(metrics$p2_dir)
 terminal$p_mis_phase1 <- rate(terminal$p1_dir); terminal$p_mis_phase2 <- rate(terminal$p2_dir)
 

@@ -36,9 +36,20 @@ fit_one <- function(observation_path) {
   relative <- sub(paste0("^", abm_dir, "/"), "", replicate_dir)
   out_dir <- file.path(out_root, relative)
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
+  final_path <- file.path(replicate_dir, "final_karyotypes.csv")
+  expected_provenance <- list(
+    fit_mode = "all_terminal_karyotypes_v1",
+    observation_digest = file_digest(observation_path),
+    final_population_digest = file_digest(final_path),
+    nboot = nboot,
+    minobs = 1L,
+    n0 = 1e4,
+    nb = 1e4,
+    pm = 5e-05
+  )
   if (file.exists(metadata_path)) {
     previous <- readRDS(metadata_path)
-    if (identical(previous$fit_mode, "all_terminal_karyotypes_v1") && identical(previous$nboot, nboot)) {
+    if (provenance_matches(previous, expected_provenance)) {
       return(data.frame(status = "skipped", observation = relative))
     }
   }
@@ -50,7 +61,8 @@ fit_one <- function(observation_path) {
           landscape_data_output = FALSE)
     saveRDS(list(observation_path = observation_path, fit_mode = "all_terminal_karyotypes_v1",
                  n_terminal_karyotypes = length(prepared$terminal), terminal_karyotypes = prepared$terminal, nboot = nboot,
-                 passage_times = prepared$passage_times, n0 = 1e4, nb = 1e4),
+                 passage_times = prepared$passage_times, n0 = 1e4, nb = 1e4,
+                 provenance = expected_provenance),
             file.path(out_dir, "fit_metadata.rds"))
     data.frame(status = "completed", observation = relative)
   }, error = function(e) data.frame(status = "failed", observation = relative, message = conditionMessage(e)))
