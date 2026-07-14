@@ -2,10 +2,11 @@
 # Submit after phase-2 ABM succeeds. Each element fits 100 trajectories.
 # Full design: 800,000 fits / 100 = 8,000 array elements.
 #SBATCH --job-name=phase2-alfak-inference
-#SBATCH --array=1-8000%40
+#SBATCH --array=1-8000
 #SBATCH --cpus-per-task=1
-#SBATCH --time=24:00:00
-#SBATCH --mem=8G
+#SBATCH --time=1-00:00:00
+#SBATCH --mem=4G
+#SBATCH --qos=large
 
 set -euo pipefail
 : "${PROJECT_DIR:?Export PROJECT_DIR before submitting.}"

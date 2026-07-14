@@ -1,10 +1,11 @@
 #!/bin/bash
 # One bounded topology-analysis task per original landscape.
 #SBATCH --job-name=phase2-topology
-#SBATCH --array=1-200%20
+#SBATCH --array=1-200
 #SBATCH --cpus-per-task=1
-#SBATCH --time=12:00:00
-#SBATCH --mem=8G
+#SBATCH --time=1-00:00:00
+#SBATCH --mem=4G
+#SBATCH --qos=large
 
 set -euo pipefail
 : "${PROJECT_DIR:?Export PROJECT_DIR before submitting.}"

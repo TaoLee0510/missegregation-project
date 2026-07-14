@@ -27,6 +27,15 @@ write_rds_atomic <- function(object, path) {
   invisible(path)
 }
 
+write_csv_atomic <- function(object, path, ...) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  tmp <- tempfile(paste0(basename(path), "_"), tmpdir = dirname(path))
+  on.exit(unlink(tmp), add = TRUE)
+  utils::write.csv(object, tmp, ...)
+  if (!file.rename(tmp, path)) stop("Could not write CSV atomically: ", path, call. = FALSE)
+  invisible(path)
+}
+
 provenance_matches <- function(previous, expected) {
   is.list(previous) && is.list(previous$provenance) && identical(previous$provenance, expected)
 }

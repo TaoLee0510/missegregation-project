@@ -1,10 +1,11 @@
 #!/bin/bash
 # Submit after all 40,000 phase-1 ABMs succeed. Each element handles 100 fits.
 #SBATCH --job-name=alfak-inference
-#SBATCH --array=1-400%40
+#SBATCH --array=1-400
 #SBATCH --cpus-per-task=1
-#SBATCH --time=24:00:00
-#SBATCH --mem=8G
+#SBATCH --time=1-00:00:00
+#SBATCH --mem=4G
+#SBATCH --qos=large
 
 set -euo pipefail
 : "${PROJECT_DIR:?Export PROJECT_DIR before submitting.}"

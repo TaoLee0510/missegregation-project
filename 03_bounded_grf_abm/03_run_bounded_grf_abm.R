@@ -9,9 +9,17 @@ args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args) >= 1L) normalizePath(args[[1]]) else getwd()
 workers <- if (length(args) >= 2L) as.integer(args[[2]]) else max(1L, parallel::detectCores(logical = TRUE) - 1L)
 landscape_index <- if (length(args) >= 3L) as.integer(args[[3]]) else NA_integer_
+p_index_filter <- if (length(args) >= 5L) as.integer(args[[4]]) else NA_integer_
+replicate_filter <- if (length(args) >= 5L) as.integer(args[[5]]) else NA_integer_
 if (!is.finite(workers) || workers < 1L) stop("`workers` must be a positive integer.", call. = FALSE)
 if (!is.na(landscape_index) && (!is.finite(landscape_index) || landscape_index < 1L)) {
   stop("`landscape_index` must be a positive integer.", call. = FALSE)
+}
+if (!is.na(p_index_filter) && (!is.finite(p_index_filter) || p_index_filter < 1L)) {
+  stop("`p_index` must be a positive integer.", call. = FALSE)
+}
+if (!is.na(replicate_filter) && (!is.finite(replicate_filter) || replicate_filter < 1L)) {
+  stop("`replicate_id` must be a positive integer.", call. = FALSE)
 }
 library(alfakR)
 source(file.path(project_dir, "R", "project_helpers.R"))
@@ -31,8 +39,17 @@ results_dir <- file.path(project_dir, "outputs", "bounded_grf")
 dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
 
 n_cells <- 10000L
-# Fourth CLI argument is an optional short-run override for smoke tests.
-n_steps <- if (length(args) >= 4L) as.integer(args[[4]]) else 2000L
+# With per-ABM task args, the sixth CLI argument is an optional short-run
+# override.  The older four-argument form still treats the fourth argument as
+# the smoke-test step count.
+n_steps <- if (length(args) >= 6L) {
+  as.integer(args[[6]])
+} else if (length(args) == 4L) {
+  as.integer(args[[4]])
+} else {
+  2000L
+}
+if (!is.finite(n_steps) || n_steps < 0L) stop("`n_steps` must be a non-negative integer.", call. = FALSE)
 dt <- 0.1
 record_interval <- 50L # Preserve 5-day summaries; integration uses every 0.1-day step.
 n_replicates <- 10L
@@ -163,15 +180,24 @@ write_initial_population <- function(landscape, results_landscape_dir) {
   k <- do.call(rbind, strsplit(fq_tags, ".", fixed = TRUE))
   storage.mode(k) <- "numeric"
   fitness <- fitness_grf(k, landscape$centroids, landscape$lambda)
-  utils::write.csv(data.frame(karyotype = initial$tags, count = initial$counts, fitness = fitness,
+  write_csv_atomic(data.frame(karyotype = initial$tags, count = initial$counts, fitness = fitness,
                               weighted_ploidy = weighted_ploidy(k)), initial_path, row.names = FALSE)
-  saveRDS(initial, meta_path)
+  write_rds_atomic(initial, meta_path)
 }
 
 prepare_landscape <- function(landscape_id) {
   landscape <- readRDS(file.path(landscape_dir, paste0(landscape_id, ".rds")))
   landscape_result_dir <- file.path(results_dir, landscape_id)
   dir.create(landscape_result_dir, recursive = TRUE, showWarnings = FALSE)
+  lock_dir <- file.path(landscape_result_dir, ".prepare_landscape.lock")
+  if (!dir.create(lock_dir, showWarnings = FALSE)) {
+    for (attempt in seq_len(1800L)) {
+      if (!dir.exists(lock_dir)) return(prepare_landscape(landscape_id))
+      Sys.sleep(2)
+    }
+    stop("Timed out waiting for landscape preparation lock: ", lock_dir, call. = FALSE)
+  }
+  on.exit(unlink(lock_dir, recursive = TRUE), add = TRUE)
   write_initial_population(landscape, landscape_result_dir)
   peak_path <- file.path(landscape_result_dir, "peak_reference.rds")
   peak_seed <- 810000L + as.integer(sub(".*_", "", landscape_id))
@@ -191,9 +217,9 @@ prepare_landscape <- function(landscape_id) {
     if (provenance_matches(existing, peak_provenance)) return(invisible(NULL))
   }
   peak_max <- estimate_peak_reference(landscape, seed = peak_seed, n_draws = peak_n_draws)
-  saveRDS(list(estimated_domain_max_fitness = peak_max, peak_threshold = 0.95 * peak_max,
-               domain = "empirical chromosome-specific bounded GRF", n_uniform_draws = peak_n_draws,
-               provenance = peak_provenance), peak_path)
+  write_rds_atomic(list(estimated_domain_max_fitness = peak_max, peak_threshold = 0.95 * peak_max,
+                        domain = "empirical chromosome-specific bounded GRF", n_uniform_draws = peak_n_draws,
+                        provenance = peak_provenance), peak_path)
 }
 
 manifest <- read.csv(file.path(landscape_dir, "manifest.csv"), stringsAsFactors = FALSE)
@@ -225,11 +251,15 @@ if (!file.exists(param_path)) {
   }
 }
 p_mis_lhs_digest <- file_digest(param_path)
+if (!is.na(p_index_filter) && p_index_filter > nrow(param_table)) stop("`p_index` exceeds the p_mis table.", call. = FALSE)
+if (!is.na(replicate_filter) && replicate_filter > n_replicates) stop("`replicate_id` exceeds the replicate count.", call. = FALSE)
+p_indices <- if (is.na(p_index_filter)) seq_along(p_mis) else p_index_filter
+replicate_ids <- if (is.na(replicate_filter)) seq_len(n_replicates) else replicate_filter
 
 tasks <- list()
 for (landscape_id in manifest$landscape_id) {
-  for (p_index in seq_along(p_mis)) {
-    for (replicate_id in seq_len(n_replicates)) {
+  for (p_index in p_indices) {
+    for (replicate_id in replicate_ids) {
       tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p_index = p_index, p_mis = p_mis[[p_index]], replicate_id = replicate_id)
     }
   }
@@ -334,10 +364,16 @@ status <- if (.Platform$OS.type == "windows" || workers <= 1L) {
                      mc.cores = workers, mc.preschedule = FALSE)
 }
 status <- bind_status(status)
-status_path <- if (is.na(landscape_index)) {
+status_path <- if (is.na(landscape_index) && is.na(p_index_filter) && is.na(replicate_filter)) {
   file.path(results_dir, "run_status.csv")
 } else {
-  file.path(results_dir, sprintf("run_status_landscape_%02d.csv", landscape_index))
+  status_suffix <- paste(
+    if (is.na(landscape_index)) "all_landscapes" else sprintf("landscape_%02d", landscape_index),
+    if (is.na(p_index_filter)) "all_p" else sprintf("p_%02d", p_index_filter),
+    if (is.na(replicate_filter)) "all_replicates" else sprintf("replicate_%02d", replicate_filter),
+    sep = "_"
+  )
+  file.path(results_dir, paste0("run_status_", status_suffix, ".csv"))
 }
 utils::write.csv(status, status_path, row.names = FALSE)
 if (any(status$status == "failed")) quit(status = 1L)

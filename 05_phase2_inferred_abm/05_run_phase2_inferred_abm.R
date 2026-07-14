@@ -9,10 +9,21 @@ project_dir <- if (length(args)) normalizePath(args[[1]]) else getwd()
 workers <- if (length(args) >= 2L) as.integer(args[[2]]) else 1L
 landscape_index <- if (length(args) >= 3L) as.integer(args[[3]]) else NA_integer_
 p1_index <- if (length(args) >= 4L) as.integer(args[[4]]) else NA_integer_
-n_steps <- if (length(args) >= 5L) as.integer(args[[5]]) else 2000L
+replicate_filter <- if (length(args) >= 6L) as.integer(args[[5]]) else NA_integer_
+p2_index <- if (length(args) >= 6L) as.integer(args[[6]]) else NA_integer_
+n_steps <- if (length(args) >= 7L) {
+  as.integer(args[[7]])
+} else if (length(args) == 5L) {
+  as.integer(args[[5]])
+} else {
+  2000L
+}
 if (!is.finite(workers) || workers < 1L) stop("`workers` must be a positive integer.", call. = FALSE)
 if (!is.na(landscape_index) && (!is.finite(landscape_index) || landscape_index < 1L)) stop("`landscape_index` must be positive.", call. = FALSE)
 if (!is.na(p1_index) && (!is.finite(p1_index) || p1_index < 1L)) stop("`p1_index` must be positive.", call. = FALSE)
+if (!is.na(replicate_filter) && (!is.finite(replicate_filter) || replicate_filter < 1L)) stop("`replicate_id` must be positive.", call. = FALSE)
+if (!is.na(p2_index) && (!is.finite(p2_index) || p2_index < 1L)) stop("`p2_index` must be positive.", call. = FALSE)
+if (!is.finite(n_steps) || n_steps < 0L) stop("`n_steps` must be a non-negative integer.", call. = FALSE)
 library(alfakR)
 source(file.path(project_dir, "R", "project_helpers.R"))
 
@@ -96,10 +107,16 @@ if (!is.na(p1_index)) {
   if (p1_index > nrow(phase1_parameters)) stop("`p1_index` exceeds the p_mis table.", call. = FALSE)
   phase1_parameters <- phase1_parameters[p1_index, , drop = FALSE]
 }
+if (!is.na(p2_index)) {
+  if (p2_index > nrow(phase2_parameters)) stop("`p2_index` exceeds the p_mis table.", call. = FALSE)
+  phase2_parameters <- phase2_parameters[p2_index, , drop = FALSE]
+}
+if (!is.na(replicate_filter) && replicate_filter > n_replicates) stop("`replicate_id` exceeds the replicate count.", call. = FALSE)
+replicate_ids <- if (is.na(replicate_filter)) seq_len(n_replicates) else replicate_filter
 
 tasks <- list()
-for (landscape_id in manifest$landscape_id) for (i in seq_len(nrow(phase1_parameters))) for (replicate_id in seq_len(n_replicates)) for (p2_index in seq_len(nrow(phase2_parameters))) {
-  tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p1 = phase1_parameters[i, ], replicate_id = replicate_id, p2 = phase2_parameters[p2_index, ])
+for (landscape_id in manifest$landscape_id) for (i in seq_len(nrow(phase1_parameters))) for (replicate_id in replicate_ids) for (j in seq_len(nrow(phase2_parameters))) {
+  tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p1 = phase1_parameters[i, ], replicate_id = replicate_id, p2 = phase2_parameters[j, ])
 }
 
 run_task <- function(task) {
@@ -123,7 +140,7 @@ run_task <- function(task) {
       replicate_id = task$replicate_id
     ),
     p_mis_lhs_digest = p_mis_lhs_digest,
-    phase2_parameter_count = nrow(phase2_parameters),
+    phase2_parameter_count = nrow(parameters),
     source_final_digest = file_digest(paths$final_path),
     source_inferred_digest = file_digest(paths$inferred_path),
     n_cells = n_cells,
@@ -165,6 +182,12 @@ run_task <- function(task) {
 safe_run_task <- function(task) tryCatch(run_task(task), error = function(e) data.frame(status = "failed", landscape_id = task$landscape_id, p1_index = task$p1$p_index, p2_index = task$p2$p_index, replicate_id = task$replicate_id, message = conditionMessage(e)))
 status <- if (.Platform$OS.type == "windows" || workers <= 1L) lapply(tasks, safe_run_task) else parallel::mclapply(tasks, safe_run_task, mc.cores = workers, mc.preschedule = FALSE)
 status <- bind_status(status)
-suffix <- paste(sprintf("landscape_%02d", if (is.na(landscape_index)) 0L else landscape_index), sprintf("p1_%02d", if (is.na(p1_index)) 0L else p1_index), sep = "_")
+suffix <- paste(
+  if (is.na(landscape_index)) "all_landscapes" else sprintf("landscape_%02d", landscape_index),
+  if (is.na(p1_index)) "all_p1" else sprintf("p1_%02d", p1_index),
+  if (is.na(replicate_filter)) "all_replicates" else sprintf("replicate_%02d", replicate_filter),
+  if (is.na(p2_index)) "all_p2" else sprintf("p2_%02d", p2_index),
+  sep = "_"
+)
 utils::write.csv(status, file.path(out_root, paste0("run_status_", suffix, ".csv")), row.names = FALSE)
 if (any(status$status == "failed")) quit(status = 1L)
