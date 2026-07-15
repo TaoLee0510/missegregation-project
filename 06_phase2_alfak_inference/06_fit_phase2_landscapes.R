@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
-# Fit an ALFA-K landscape to every phase-2 ABM trajectory using every observed
-# karyotype and its full recorded trajectory.
+# Fit an ALFA-K landscape to every phase-2 ABM trajectory using the union of
+# karyotypes observed at ABM steps 0, 1000, and 2000.
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args)) normalizePath(args[[1]]) else getwd()
 workers <- if (length(args) >= 2L) as.integer(args[[2]]) else 1L
@@ -28,8 +28,10 @@ fit_one <- function(path) {
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
   abm_pm <- read_abm_missegregation_rate(path)
   expected_provenance <- list(
-    fit_mode = "all_observed_karyotypes_v1",
+    fit_mode = alfak_fit_mode,
     observation_digest = file_digest(path),
+    observation_steps = alfak_observation_steps,
+    karyotype_selection = alfak_karyotype_selection,
     nboot = nboot,
     minobs = 1L,
     n0 = 1e4,
@@ -45,10 +47,12 @@ fit_one <- function(path) {
   alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times,
         minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
         landscape_data_output = FALSE)
-  saveRDS(list(observation_path = path, fit_mode = "all_observed_karyotypes_v1",
+  saveRDS(list(observation_path = path, fit_mode = prepared$fit_mode,
                n_observed_karyotypes = length(prepared$observed_karyotypes),
                observed_karyotypes = prepared$observed_karyotypes,
-               nboot = nboot, passage_times = prepared$passage_times,
+               nboot = nboot, observation_steps = prepared$observation_steps,
+               karyotype_selection = prepared$karyotype_selection,
+               passage_times = prepared$passage_times,
                n0 = 1e4, nb = 1e4, pm = abm_pm, provenance = expected_provenance),
           metadata_path)
   data.frame(status = "completed", observation = relative)

@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
 # Fit one ALFA-K local landscape for every bounded-GRF landscape, p_mis value,
-# and ABM replicate. Each fit uses every karyotype observed anywhere in that
-# replicate's phase-1 trajectory.
+# and ABM replicate. Each fit uses the union of karyotypes observed at ABM
+# steps 0, 1000, and 2000 in that replicate's phase-1 trajectory.
 
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args) >= 1L) normalizePath(args[[1]]) else getwd()
@@ -38,8 +38,10 @@ fit_one <- function(observation_path) {
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
   abm_pm <- read_abm_missegregation_rate(observation_path)
   expected_provenance <- list(
-    fit_mode = "all_observed_karyotypes_v1",
+    fit_mode = alfak_fit_mode,
     observation_digest = file_digest(observation_path),
+    observation_steps = alfak_observation_steps,
+    karyotype_selection = alfak_karyotype_selection,
     nboot = nboot,
     minobs = 1L,
     n0 = 1e4,
@@ -58,10 +60,13 @@ fit_one <- function(observation_path) {
     alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times,
           minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
           landscape_data_output = FALSE)
-    saveRDS(list(observation_path = observation_path, fit_mode = "all_observed_karyotypes_v1",
+    saveRDS(list(observation_path = observation_path, fit_mode = prepared$fit_mode,
                  n_observed_karyotypes = length(prepared$observed_karyotypes),
                  observed_karyotypes = prepared$observed_karyotypes, nboot = nboot,
-                 passage_times = prepared$passage_times, n0 = 1e4, nb = 1e4, pm = abm_pm,
+                 observation_steps = prepared$observation_steps,
+                 karyotype_selection = prepared$karyotype_selection,
+                 passage_times = prepared$passage_times,
+                 n0 = 1e4, nb = 1e4, pm = abm_pm,
                  provenance = expected_provenance),
             file.path(out_dir, "fit_metadata.rds"))
     data.frame(status = "completed", observation = relative)

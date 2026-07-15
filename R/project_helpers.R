@@ -95,7 +95,11 @@ allocate_counts_exact <- function(weights, total, min_count = 0L, tie_breaker = 
   counts
 }
 
-prepare_observed_input <- function(observation_path) {
+alfak_observation_steps <- c(0, 1000, 2000)
+alfak_karyotype_selection <- "union_of_selected_timepoints"
+alfak_fit_mode <- "timepoint_union_karyotypes_steps_0_1000_2000_v1"
+
+prepare_observed_input <- function(observation_path, observation_steps = alfak_observation_steps) {
   observed <- readRDS(observation_path)
   if (!is.list(observed) || is.null(observed$x) || is.null(observed$dt) || is.null(observed$passage_times)) {
     stop("Invalid ABM observation object: ", observation_path, call. = FALSE)
@@ -104,6 +108,22 @@ prepare_observed_input <- function(observation_path) {
   if (is.null(rownames(x)) || any(!nzchar(rownames(x)))) {
     stop("ABM observation matrix must have karyotype row names: ", observation_path, call. = FALSE)
   }
+  if (is.null(colnames(x)) || any(!nzchar(colnames(x)))) {
+    stop("ABM observation matrix must have timepoint column names: ", observation_path, call. = FALSE)
+  }
+  if (length(observed$passage_times) != ncol(x)) {
+    stop("ABM observation passage_times length does not match observation columns: ", observation_path, call. = FALSE)
+  }
+  step_labels <- as.character(observation_steps)
+  keep_cols <- match(step_labels, colnames(x))
+  if (anyNA(keep_cols)) {
+    stop("ABM observation is missing required timepoint column(s): ",
+         paste(step_labels[is.na(keep_cols)], collapse = ", "),
+         " in ", observation_path, call. = FALSE)
+  }
+  x <- x[, keep_cols, drop = FALSE]
+  passage_times <- observed$passage_times[keep_cols]
+  # ALFAK input support is the union of karyotypes observed at the selected steps.
   observed_rows <- rowSums(x) > 0
   if (!any(observed_rows)) stop("No observed karyotypes for ", observation_path, call. = FALSE)
   x <- x[observed_rows, , drop = FALSE]
@@ -113,8 +133,11 @@ prepare_observed_input <- function(observation_path) {
          paste(colnames(x)[zero_depth], collapse = ", "),
          " in ", observation_path, call. = FALSE)
   }
-  list(yi = list(x = x, dt = observed$dt), passage_times = observed$passage_times,
-       observed_karyotypes = rownames(x))
+  list(yi = list(x = x, dt = observed$dt), passage_times = passage_times,
+       observed_karyotypes = rownames(x),
+       observation_steps = as.numeric(colnames(x)),
+       karyotype_selection = alfak_karyotype_selection,
+       fit_mode = alfak_fit_mode)
 }
 
 read_abm_missegregation_rate <- function(observation_path) {
