@@ -43,7 +43,7 @@ fit_one <- function(observation_path) {
     observation_steps = alfak_observation_steps,
     karyotype_selection = alfak_karyotype_selection,
     nboot = nboot,
-    minobs = 1L,
+    minobs = alfak_minobs,
     n0 = 1e4,
     nb = 1e4,
     pm = abm_pm
@@ -58,7 +58,7 @@ fit_one <- function(observation_path) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   tryCatch({
     alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times,
-          minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
+          minobs = alfak_minobs, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
           landscape_data_output = FALSE)
     saveRDS(list(observation_path = observation_path, fit_mode = prepared$fit_mode,
                  n_observed_karyotypes = length(prepared$observed_karyotypes),
@@ -66,7 +66,7 @@ fit_one <- function(observation_path) {
                  observation_steps = prepared$observation_steps,
                  karyotype_selection = prepared$karyotype_selection,
                  passage_times = prepared$passage_times,
-                 n0 = 1e4, nb = 1e4, pm = abm_pm,
+                 minobs = alfak_minobs, n0 = 1e4, nb = 1e4, pm = abm_pm,
                  provenance = expected_provenance),
             file.path(out_dir, "fit_metadata.rds"))
     data.frame(status = "completed", observation = relative)

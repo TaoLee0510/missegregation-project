@@ -97,7 +97,8 @@ allocate_counts_exact <- function(weights, total, min_count = 0L, tie_breaker = 
 
 alfak_observation_steps <- c(0, 1000, 2000)
 alfak_karyotype_selection <- "union_of_selected_timepoints"
-alfak_fit_mode <- "timepoint_union_karyotypes_steps_0_1000_2000_v1"
+alfak_minobs <- 5L
+alfak_fit_mode <- sprintf("timepoint_union_karyotypes_steps_0_1000_2000_minobs%d_v1", alfak_minobs)
 
 prepare_observed_input <- function(observation_path, observation_steps = alfak_observation_steps) {
   observed <- readRDS(observation_path)
