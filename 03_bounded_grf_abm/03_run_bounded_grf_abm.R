@@ -13,31 +13,123 @@ workers <- if (length(args) >= 2L) as.integer(args[[2]]) else max(1L, parallel::
 landscape_index <- if (length(args) >= 3L) as.integer(args[[3]]) else NA_integer_
 p_index_filter <- if (length(args) >= 5L) as.integer(args[[4]]) else NA_integer_
 replicate_filter <- if (length(args) >= 5L) as.integer(args[[5]]) else NA_integer_
+profile_enabled <- tolower(Sys.getenv("PROFILE_PHASE1_ABM", unset = "false")) %in% c("1", "true", "yes")
+profile_clock <- function() unname(proc.time()[["elapsed"]])
+profile_events <- list()
+profile_run_id <- Sys.getenv("PHASE1_ABM_PROFILE_ID", unset = "")
+if (profile_enabled && !nzchar(profile_run_id)) {
+  profile_run_id <- paste(
+    format(Sys.time(), "%Y%m%d_%H%M%S"),
+    if (is.na(landscape_index)) "all_landscapes" else sprintf("landscape_%02d", landscape_index),
+    if (is.na(p_index_filter)) "all_p" else sprintf("p_%02d", p_index_filter),
+    if (is.na(replicate_filter)) "all_replicates" else sprintf("replicate_%02d", replicate_filter),
+    sep = "_"
+  )
+}
+profile_root <- Sys.getenv(
+  "PHASE1_ABM_PROFILE_DIR",
+  unset = file.path(project_dir, "outputs", "diagnostics", "phase1_abm_profile")
+)
+profile_output_dir <- if (profile_enabled) file.path(profile_root, profile_run_id) else NA_character_
+if (profile_enabled) dir.create(profile_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+profile_step <- function(stage, expr, task = NULL, message = NA_character_, output_path = NA_character_) {
+  if (!profile_enabled) return(force(expr))
+  started_at <- Sys.time()
+  started_elapsed <- profile_clock()
+  status <- "completed"
+  error_message <- message
+  value <- tryCatch(
+    force(expr),
+    error = function(e) {
+      status <<- "failed"
+      error_message <<- conditionMessage(e)
+      NULL
+    }
+  )
+  ended_at <- Sys.time()
+  task <- if (is.null(task)) list() else task
+  profile_events[[length(profile_events) + 1L]] <<- data.frame(
+    stage = stage,
+    status = status,
+    elapsed_seconds = profile_clock() - started_elapsed,
+    started_at = format(started_at, "%Y-%m-%d %H:%M:%OS3 %Z"),
+    ended_at = format(ended_at, "%Y-%m-%d %H:%M:%OS3 %Z"),
+    landscape_id = if (!is.null(task$landscape_id)) task$landscape_id else NA_character_,
+    p_index = if (!is.null(task$p_index)) task$p_index else NA_integer_,
+    p_mis = if (!is.null(task$p_mis)) task$p_mis else NA_real_,
+    replicate_id = if (!is.null(task$replicate_id)) task$replicate_id else NA_integer_,
+    n_steps = NA_integer_,
+    output_path = output_path,
+    message = error_message,
+    stringsAsFactors = FALSE
+  )
+  if (identical(status, "failed")) stop(error_message, call. = FALSE)
+  value
+}
+
+write_profile_outputs <- function(status = NULL, status_path = NA_character_) {
+  if (!profile_enabled) return(invisible(NULL))
+  rows <- if (length(profile_events)) do.call(rbind, profile_events) else data.frame()
+  if (nrow(rows) && exists("n_steps", inherits = TRUE)) rows$n_steps[is.na(rows$n_steps)] <- get("n_steps", inherits = TRUE)
+  timing_path <- file.path(profile_output_dir, "timing.csv")
+  utils::write.csv(rows, timing_path, row.names = FALSE)
+
+  top_stages <- if (nrow(rows)) {
+    totals <- stats::aggregate(elapsed_seconds ~ stage, data = rows, FUN = sum)
+    totals <- totals[order(-totals$elapsed_seconds), , drop = FALSE]
+    utils::head(totals, 20L)
+  } else {
+    data.frame(stage = character(), elapsed_seconds = numeric())
+  }
+  summary_path <- file.path(profile_output_dir, "summary.txt")
+  writeLines(c(
+    "phase1 bounded-GRF ABM profile",
+    paste("project_dir:", project_dir),
+    paste("results_dir:", if (exists("results_dir", inherits = TRUE)) get("results_dir", inherits = TRUE) else NA_character_),
+    paste("profile_dir:", profile_output_dir),
+    paste("status_path:", status_path),
+    "",
+    "top stages by elapsed seconds:",
+    capture.output(print(top_stages, row.names = FALSE)),
+    "",
+    "run status:",
+    if (is.null(status)) "not available" else capture.output(print(status, row.names = FALSE))
+  ), summary_path)
+  message("Profile timing written to: ", timing_path)
+  invisible(timing_path)
+}
 if (!is.finite(workers) || workers < 1L) stop("`workers` must be a positive integer.", call. = FALSE)
+if (profile_enabled && workers > 1L) {
+  warning("PROFILE_PHASE1_ABM is enabled; forcing workers = 1 so timing events are ordered.", call. = FALSE)
+  workers <- 1L
+}
 if (!is.na(landscape_index) && (!is.finite(landscape_index) || landscape_index < 1L)) {
   stop("`landscape_index` must be a positive integer.", call. = FALSE)
 }
 if (!is.na(p_index_filter) && (!is.finite(p_index_filter) || p_index_filter < 1L)) {
   stop("`p_index` must be a positive integer.", call. = FALSE)
 }
-source(file.path(project_dir, "R", "project_helpers.R"))
-load_project_alfak(project_dir)
+invisible(profile_step("load_project_helpers", source(file.path(project_dir, "R", "project_helpers.R"))))
+invisible(profile_step("load_project_alfak", load_project_alfak(project_dir)))
 if (!is.na(replicate_filter) && (!is.finite(replicate_filter) || replicate_filter < 1L)) {
   stop("`replicate_id` must be a positive integer.", call. = FALSE)
 }
 
-landscape_dir <- file.path(project_dir, "data", "landscapes")
-reference <- readRDS(file.path(project_dir, "data", "reference_ploidy", "reference_ploidy.rds"))
-reference_digest <- object_digest(reference)
-bound_profile <- reference$bound_profile
-bound_profile_digest <- object_digest(bound_profile)
-lower_copy_numbers <- as.integer(bound_profile$lower_copy_number)
-upper_copy_numbers <- as.integer(bound_profile$upper_copy_number)
-reference_mean_ploidy <- reference$reference_mean_ploidy
-arm_loci <- readRDS(file.path(project_dir, "data", "salehi_reference", "raw", "arm_loci.Rds"))
-length_table <- aggregate(end ~ chrom, data = subset(arm_loci, chrom %in% as.character(1:22)), FUN = max)
-chromosome_lengths <- length_table$end[match(as.character(seq_len(22L)), length_table$chrom)]
-results_dir <- file.path(project_dir, "outputs", "bounded_grf")
+invisible(profile_step("load_reference_inputs", {
+  landscape_dir <- file.path(project_dir, "data", "landscapes")
+  reference <- readRDS(file.path(project_dir, "data", "reference_ploidy", "reference_ploidy.rds"))
+  reference_digest <- object_digest(reference)
+  bound_profile <- reference$bound_profile
+  bound_profile_digest <- object_digest(bound_profile)
+  lower_copy_numbers <- as.integer(bound_profile$lower_copy_number)
+  upper_copy_numbers <- as.integer(bound_profile$upper_copy_number)
+  reference_mean_ploidy <- reference$reference_mean_ploidy
+  arm_loci <- readRDS(file.path(project_dir, "data", "salehi_reference", "raw", "arm_loci.Rds"))
+  length_table <- aggregate(end ~ chrom, data = subset(arm_loci, chrom %in% as.character(1:22)), FUN = max)
+  chromosome_lengths <- length_table$end[match(as.character(seq_len(22L)), length_table$chrom)]
+}))
+results_dir <- Sys.getenv("BOUNDED_GRF_RESULTS_DIR", unset = file.path(project_dir, "outputs", "bounded_grf"))
 dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
 
 n_cells <- 10000L
@@ -204,6 +296,7 @@ state_summary <- function(counts, landscape, peak_threshold) {
 }
 
 write_initial_population <- function(landscape, results_landscape_dir) {
+  profile_task <- list(landscape_id = landscape$landscape_id)
   initial_path <- file.path(results_landscape_dir, "initial_population.csv")
   candidate_path <- file.path(results_landscape_dir, "initial_x0_candidates.csv")
   meta_path <- file.path(results_landscape_dir, "initialization.rds")
@@ -228,9 +321,17 @@ write_initial_population <- function(landscape, results_landscape_dir) {
     existing <- readRDS(meta_path)
     if (provenance_matches(existing, expected_provenance)) return(invisible(NULL))
   }
-  candidates <- sample_initial_fq(landscape, n_frequent_karyotypes, seed = seed)
+  candidates <- profile_step(
+    "initial_population/sample_initial_fq",
+    sample_initial_fq(landscape, n_frequent_karyotypes, seed = seed),
+    task = profile_task
+  )
   x0 <- stats::setNames(candidates$x0_weight, candidates$karyotype)
-  allocated <- prepare_initial_population_from_x0(x0, n_cells)
+  allocated <- profile_step(
+    "initial_population/allocate_counts",
+    prepare_initial_population_from_x0(x0, n_cells),
+    task = profile_task
+  )
   counts <- allocated$counts
   fq_tags <- allocated$tags
   names(counts) <- fq_tags
@@ -247,25 +348,53 @@ write_initial_population <- function(landscape, results_landscape_dir) {
   )
   candidate_k <- do.call(rbind, strsplit(candidates$karyotype, ".", fixed = TRUE))
   storage.mode(candidate_k) <- "numeric"
-  candidate_fitness <- fitness_grf(candidate_k, landscape$centroids, landscape$lambda)
+  candidate_fitness <- profile_step(
+    "initial_population/score_candidates",
+    fitness_grf(candidate_k, landscape$centroids, landscape$lambda),
+    task = profile_task
+  )
   candidate_counts <- allocated$allocated_counts[candidates$karyotype]
-  write_csv_atomic(data.frame(karyotype = candidates$karyotype, x0_weight = candidates$x0_weight,
-                              x0_frequency = allocated$x0[candidates$karyotype],
-                              allocated_count = as.integer(candidate_counts),
-                              fitness = candidate_fitness,
-                              weighted_ploidy = weighted_ploidy(candidate_k)),
-                   candidate_path, row.names = FALSE)
+  profile_step(
+    "initial_population/write_candidate_table",
+    write_csv_atomic(data.frame(karyotype = candidates$karyotype, x0_weight = candidates$x0_weight,
+                                x0_frequency = allocated$x0[candidates$karyotype],
+                                allocated_count = as.integer(candidate_counts),
+                                fitness = candidate_fitness,
+                                weighted_ploidy = weighted_ploidy(candidate_k)),
+                     candidate_path, row.names = FALSE),
+    task = profile_task,
+    output_path = candidate_path
+  )
   k <- do.call(rbind, strsplit(fq_tags, ".", fixed = TRUE))
   storage.mode(k) <- "numeric"
-  fitness <- fitness_grf(k, landscape$centroids, landscape$lambda)
-  write_csv_atomic(data.frame(karyotype = initial$tags, count = initial$counts, fitness = fitness,
-                              x0_frequency = allocated$x0[fq_tags],
-                              weighted_ploidy = weighted_ploidy(k)), initial_path, row.names = FALSE)
-  write_rds_atomic(initial, meta_path)
+  fitness <- profile_step(
+    "initial_population/score_allocated_population",
+    fitness_grf(k, landscape$centroids, landscape$lambda),
+    task = profile_task
+  )
+  profile_step(
+    "initial_population/write_initial_table",
+    write_csv_atomic(data.frame(karyotype = initial$tags, count = initial$counts, fitness = fitness,
+                                x0_frequency = allocated$x0[fq_tags],
+                                weighted_ploidy = weighted_ploidy(k)), initial_path, row.names = FALSE),
+    task = profile_task,
+    output_path = initial_path
+  )
+  profile_step(
+    "initial_population/write_metadata",
+    write_rds_atomic(initial, meta_path),
+    task = profile_task,
+    output_path = meta_path
+  )
 }
 
 prepare_landscape <- function(landscape_id) {
-  landscape <- readRDS(file.path(landscape_dir, paste0(landscape_id, ".rds")))
+  profile_task <- list(landscape_id = landscape_id)
+  landscape <- profile_step(
+    "prepare_landscape/read_landscape",
+    readRDS(file.path(landscape_dir, paste0(landscape_id, ".rds"))),
+    task = profile_task
+  )
   landscape_result_dir <- file.path(results_dir, landscape_id)
   dir.create(landscape_result_dir, recursive = TRUE, showWarnings = FALSE)
   lock_dir <- file.path(landscape_result_dir, ".prepare_landscape.lock")
@@ -277,7 +406,11 @@ prepare_landscape <- function(landscape_id) {
     stop("Timed out waiting for landscape preparation lock: ", lock_dir, call. = FALSE)
   }
   on.exit(unlink(lock_dir, recursive = TRUE), add = TRUE)
-  write_initial_population(landscape, landscape_result_dir)
+  profile_step(
+    "prepare_landscape/write_initial_population",
+    write_initial_population(landscape, landscape_result_dir),
+    task = profile_task
+  )
   peak_path <- file.path(landscape_result_dir, "peak_reference.rds")
   peak_seed <- 810000L + as.integer(sub(".*_", "", landscape_id))
   peak_n_draws <- 100000L
@@ -295,13 +428,22 @@ prepare_landscape <- function(landscape_id) {
     existing <- readRDS(peak_path)
     if (provenance_matches(existing, peak_provenance)) return(invisible(NULL))
   }
-  peak_max <- estimate_peak_reference(landscape, seed = peak_seed, n_draws = peak_n_draws)
-  write_rds_atomic(list(estimated_domain_max_fitness = peak_max, peak_threshold = 0.95 * peak_max,
-                        domain = "empirical chromosome-specific bounded GRF", n_uniform_draws = peak_n_draws,
-                        provenance = peak_provenance), peak_path)
+  peak_max <- profile_step(
+    "peak_reference/estimate_domain_max",
+    estimate_peak_reference(landscape, seed = peak_seed, n_draws = peak_n_draws),
+    task = profile_task
+  )
+  profile_step(
+    "peak_reference/write_metadata",
+    write_rds_atomic(list(estimated_domain_max_fitness = peak_max, peak_threshold = 0.95 * peak_max,
+                          domain = "empirical chromosome-specific bounded GRF", n_uniform_draws = peak_n_draws,
+                          provenance = peak_provenance), peak_path),
+    task = profile_task,
+    output_path = peak_path
+  )
 }
 
-manifest <- read.csv(file.path(landscape_dir, "manifest.csv"), stringsAsFactors = FALSE)
+manifest <- profile_step("load_landscape_manifest", read.csv(file.path(landscape_dir, "manifest.csv"), stringsAsFactors = FALSE))
 if (!is.na(landscape_index)) {
   if (landscape_index > nrow(manifest)) stop("`landscape_index` exceeds the number of landscapes.", call. = FALSE)
   manifest <- manifest[landscape_index, , drop = FALSE]
@@ -313,43 +455,58 @@ lhs_u <- c(0, (seq_len(n_p_mis - 2L) + stats::runif(n_p_mis - 2L)) / n_p_mis, 1)
 p_mis <- 0.00025 + lhs_u * (0.01 - 0.00025)
 param_table <- data.frame(p_index = seq_along(p_mis), p_mis = p_mis)
 param_path <- file.path(results_dir, "p_mis_lhs.csv")
-if (!file.exists(param_path)) {
-  param_tmp <- tempfile("p_mis_lhs_", tmpdir = results_dir)
-  utils::write.csv(param_table, param_tmp, row.names = FALSE)
-  if (!file.rename(param_tmp, param_path) && !file.exists(param_path)) {
-    stop("Could not create p_mis_lhs.csv.", call. = FALSE)
+invisible(profile_step("prepare_p_mis_table", {
+  if (!file.exists(param_path)) {
+    param_tmp <- tempfile("p_mis_lhs_", tmpdir = results_dir)
+    utils::write.csv(param_table, param_tmp, row.names = FALSE)
+    if (!file.rename(param_tmp, param_path) && !file.exists(param_path)) {
+      stop("Could not create p_mis_lhs.csv.", call. = FALSE)
+    }
+  } else {
+    existing_param <- read.csv(param_path, stringsAsFactors = FALSE)
+    invalid_param <- !all(names(param_table) %in% names(existing_param)) ||
+      nrow(existing_param) != nrow(param_table) ||
+      !identical(as.integer(existing_param$p_index), as.integer(param_table$p_index)) ||
+      !isTRUE(all.equal(existing_param$p_mis, param_table$p_mis, tolerance = 1e-12, check.attributes = FALSE))
+    if (invalid_param) {
+      stop("Existing p_mis_lhs.csv does not match the current deterministic p_mis table.", call. = FALSE)
+    }
   }
-} else {
-  existing_param <- read.csv(param_path, stringsAsFactors = FALSE)
-  invalid_param <- !all(names(param_table) %in% names(existing_param)) ||
-    nrow(existing_param) != nrow(param_table) ||
-    !identical(as.integer(existing_param$p_index), as.integer(param_table$p_index)) ||
-    !isTRUE(all.equal(existing_param$p_mis, param_table$p_mis, tolerance = 1e-12, check.attributes = FALSE))
-  if (invalid_param) {
-    stop("Existing p_mis_lhs.csv does not match the current deterministic p_mis table.", call. = FALSE)
-  }
-}
+}, output_path = param_path))
 p_mis_lhs_digest <- file_digest(param_path)
 if (!is.na(p_index_filter) && p_index_filter > nrow(param_table)) stop("`p_index` exceeds the p_mis table.", call. = FALSE)
 if (!is.na(replicate_filter) && replicate_filter > n_replicates) stop("`replicate_id` exceeds the replicate count.", call. = FALSE)
 p_indices <- if (is.na(p_index_filter)) seq_along(p_mis) else p_index_filter
 replicate_ids <- if (is.na(replicate_filter)) seq_len(n_replicates) else replicate_filter
 
-tasks <- list()
-for (landscape_id in manifest$landscape_id) {
-  for (p_index in p_indices) {
-    for (replicate_id in replicate_ids) {
-      tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p_index = p_index, p_mis = p_mis[[p_index]], replicate_id = replicate_id)
+tasks <- profile_step("build_task_grid", {
+  tasks <- list()
+  for (landscape_id in manifest$landscape_id) {
+    for (p_index in p_indices) {
+      for (replicate_id in replicate_ids) {
+        tasks[[length(tasks) + 1L]] <- list(landscape_id = landscape_id, p_index = p_index, p_mis = p_mis[[p_index]], replicate_id = replicate_id)
+      }
     }
   }
+  tasks
+})
+for (landscape_id in unique(vapply(tasks, `[[`, character(1), "landscape_id"))) {
+  invisible(profile_step("prepare_landscape/total", prepare_landscape(landscape_id), task = list(landscape_id = landscape_id)))
 }
-for (landscape_id in unique(vapply(tasks, `[[`, character(1), "landscape_id"))) prepare_landscape(landscape_id)
 
 run_task <- function(task) {
-  landscape <- readRDS(file.path(landscape_dir, paste0(task$landscape_id, ".rds")))
+  landscape <- profile_step(
+    "task/read_landscape",
+    readRDS(file.path(landscape_dir, paste0(task$landscape_id, ".rds"))),
+    task = task
+  )
   landscape_result_dir <- file.path(results_dir, task$landscape_id)
   dir.create(landscape_result_dir, recursive = TRUE, showWarnings = FALSE)
-  initial <- readRDS(file.path(landscape_result_dir, "initialization.rds"))
+  initial <- profile_step(
+    "task/read_initial_population",
+    readRDS(file.path(landscape_result_dir, "initialization.rds")),
+    task = task
+  )
   initial_counts <- initial$counts
   names(initial_counts) <- initial$tags
   p_dir <- file.path(landscape_result_dir, sprintf("p_mis_%02d_%.8f", task$p_index, task$p_mis))
@@ -360,70 +517,99 @@ run_task <- function(task) {
   observations_path <- file.path(replicate_dir, "abm_observations.rds")
   metadata_path <- file.path(replicate_dir, "run_metadata.rds")
   initial_path <- file.path(landscape_result_dir, "initialization.rds")
-  expected_provenance <- list(
-    model_version = model_version,
-    task = task,
-    landscape_digest = landscape_digest(task$landscape_id),
-    reference_digest = reference_digest,
-    bound_profile_digest = bound_profile_digest,
-    p_mis_lhs_digest = p_mis_lhs_digest,
-    initialization_digest = file_digest(initial_path),
-    n_cells = n_cells,
-    n_steps = n_steps,
-    dt = dt,
-    record_interval = record_interval,
-    culling_survival_fraction = 0.999,
-    excluded_karyotypes = diploid_tag
+  expected_provenance <- profile_step(
+    "task/build_expected_provenance",
+    list(
+      model_version = model_version,
+      task = task,
+      landscape_digest = landscape_digest(task$landscape_id),
+      reference_digest = reference_digest,
+      bound_profile_digest = bound_profile_digest,
+      p_mis_lhs_digest = p_mis_lhs_digest,
+      initialization_digest = file_digest(initial_path),
+      n_cells = n_cells,
+      n_steps = n_steps,
+      dt = dt,
+      record_interval = record_interval,
+      culling_survival_fraction = 0.999,
+      excluded_karyotypes = diploid_tag
+    ),
+    task = task
   )
   if (file.exists(final_path) && file.exists(summary_path) && file.exists(observations_path) && file.exists(metadata_path)) {
     previous <- readRDS(metadata_path)
     if (provenance_matches(previous, expected_provenance)) return(data.frame(status = "skipped", task))
   }
 
-  peak_reference <- readRDS(file.path(landscape_result_dir, "peak_reference.rds"))
+  peak_reference <- profile_step(
+    "task/read_peak_reference",
+    readRDS(file.path(landscape_result_dir, "peak_reference.rds")),
+    task = task
+  )
   peak_max <- peak_reference$estimated_domain_max_fitness
   peak_threshold <- peak_reference$peak_threshold
   seed <- 910000L + as.integer(sub(".*_", "", task$landscape_id)) * 1000L + task$p_index * 10L + task$replicate_id
-  raw <- run_alfak_abm(
-    initial_population_r = as.list(initial_counts),
-    fitness_map_r = stats::setNames(list(), character(0)),
-    p_missegregation = task$p_mis,
-    dt = dt,
-    n_steps = n_steps,
-    max_population_size = n_cells,
-    culling_survival_fraction = 0.999,
-    record_interval = record_interval,
-    seed = seed,
-    grf_centroids = landscape$centroids,
-    grf_lambda = landscape$lambda,
-    lower_copy_numbers = lower_copy_numbers,
-    upper_copy_numbers = upper_copy_numbers,
-    excluded_karyotypes = diploid_tag
+  raw <- profile_step(
+    "task/run_alfak_abm",
+    run_alfak_abm(
+      initial_population_r = as.list(initial_counts),
+      fitness_map_r = stats::setNames(list(), character(0)),
+      p_missegregation = task$p_mis,
+      dt = dt,
+      n_steps = n_steps,
+      max_population_size = n_cells,
+      culling_survival_fraction = 0.999,
+      record_interval = record_interval,
+      seed = seed,
+      grf_centroids = landscape$centroids,
+      grf_lambda = landscape$lambda,
+      lower_copy_numbers = lower_copy_numbers,
+      upper_copy_numbers = upper_copy_numbers,
+      excluded_karyotypes = diploid_tag
+    ),
+    task = task
   )
   boundary_rejections <- unname(attr(raw, "boundary_rejections")[[1L]])
-  saveRDS(raw_to_observations(raw, dt), observations_path)
-  summaries <- lapply(names(raw), function(step) {
-    counts <- raw[[step]]
-    s <- state_summary(counts, landscape, peak_threshold)
-    cbind(time_days = as.numeric(step) * dt, step = as.integer(step), s)
-  })
-  summaries <- do.call(rbind, summaries)
+  observations <- profile_step("task/raw_to_observations", raw_to_observations(raw, dt), task = task)
+  profile_step("task/write_observations", saveRDS(observations, observations_path), task = task, output_path = observations_path)
+  summaries <- profile_step(
+    "task/build_trajectory_summary",
+    {
+      summaries <- lapply(names(raw), function(step) {
+        counts <- raw[[step]]
+        s <- state_summary(counts, landscape, peak_threshold)
+        cbind(time_days = as.numeric(step) * dt, step = as.integer(step), s)
+      })
+      do.call(rbind, summaries)
+    },
+    task = task
+  )
   final_counts <- raw[[tail(names(raw), 1L)]]
   k <- do.call(rbind, strsplit(names(final_counts), ".", fixed = TRUE))
   storage.mode(k) <- "numeric"
-  final_fitness <- fitness_grf(k, landscape$centroids, landscape$lambda)
-  utils::write.csv(data.frame(karyotype = names(final_counts), count = as.numeric(final_counts), fitness = final_fitness,
-                              is_peak = final_fitness >= peak_threshold), final_path, row.names = FALSE)
-  utils::write.csv(summaries, summary_path, row.names = FALSE)
-  saveRDS(list(task = task, seed = seed, peak_reference_max = peak_max, peak_threshold = peak_threshold,
-               integration_dt_days = dt, n_steps = n_steps, record_interval_steps = record_interval,
-               carrying_capacity = n_cells, culling_survival_fraction = 0.999,
-               fitness_mode = "full GRF evaluated on every in-bounds karyotype",
-               excluded_karyotypes = diploid_tag,
-               bounds = bound_profile, reference_mean_ploidy = reference_mean_ploidy,
-               boundary_rejections = boundary_rejections, model_version = model_version,
-               provenance = expected_provenance),
-          metadata_path)
+  final_fitness <- profile_step("task/score_final_population", fitness_grf(k, landscape$centroids, landscape$lambda), task = task)
+  profile_step(
+    "task/write_final_karyotypes",
+    utils::write.csv(data.frame(karyotype = names(final_counts), count = as.numeric(final_counts), fitness = final_fitness,
+                                is_peak = final_fitness >= peak_threshold), final_path, row.names = FALSE),
+    task = task,
+    output_path = final_path
+  )
+  profile_step("task/write_trajectory_summary", utils::write.csv(summaries, summary_path, row.names = FALSE), task = task, output_path = summary_path)
+  profile_step(
+    "task/write_run_metadata",
+    saveRDS(list(task = task, seed = seed, peak_reference_max = peak_max, peak_threshold = peak_threshold,
+                 integration_dt_days = dt, n_steps = n_steps, record_interval_steps = record_interval,
+                 carrying_capacity = n_cells, culling_survival_fraction = 0.999,
+                 fitness_mode = "full GRF evaluated on every in-bounds karyotype",
+                 excluded_karyotypes = diploid_tag,
+                 bounds = bound_profile, reference_mean_ploidy = reference_mean_ploidy,
+                 boundary_rejections = boundary_rejections, model_version = model_version,
+                 provenance = expected_provenance),
+            metadata_path),
+    task = task,
+    output_path = metadata_path
+  )
   data.frame(status = "completed", task,
              final_population = tail(summaries$population, 1L),
              final_diversity = tail(summaries$diversity, 1L),
@@ -454,5 +640,6 @@ status_path <- if (is.na(landscape_index) && is.na(p_index_filter) && is.na(repl
   )
   file.path(results_dir, paste0("run_status_", status_suffix, ".csv"))
 }
-utils::write.csv(status, status_path, row.names = FALSE)
+invisible(profile_step("write_run_status", utils::write.csv(status, status_path, row.names = FALSE), output_path = status_path))
+write_profile_outputs(status, status_path)
 if (any(status$status == "failed")) quit(status = 1L)

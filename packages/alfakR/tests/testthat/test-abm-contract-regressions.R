@@ -25,6 +25,24 @@ test_that("ABM excludes configured karyotypes from the initial population", {
   expect_true(aneuploid %in% names(out[[1L]]))
 })
 
+test_that("ABM culling enforces max_population_size after dynamic cap sampling", {
+  out <- alfakR::run_karyotype_abm(
+    initial_population_r = stats::setNames(list(100L), "1"),
+    fitness_map_r = stats::setNames(list(0.1), "1"),
+    p_missegregation = 0,
+    dt = 1,
+    n_steps = 5L,
+    max_population_size = 50L,
+    culling_survival_fraction = 0.999,
+    record_interval = 1L,
+    seed = 123L,
+    grf_centroids = matrix(0, 0, 0),
+    grf_lambda = NA_real_
+  )
+  totals <- vapply(out, function(x) sum(as.numeric(x)), numeric(1))
+  expect_true(all(totals[names(totals) != "0"] <= 50))
+})
+
 test_that("ABM wrappers keep large initial counts above the 32-bit range integer-valued", {
   total_size <- .Machine$integer.max + 25
   lscape <- data.frame(k = c("2.2", "3.1"), mean = c(0.1, 0.2), stringsAsFactors = FALSE)

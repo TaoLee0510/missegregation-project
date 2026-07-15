@@ -11,6 +11,7 @@
 #include <cmath>     // std::round
 #include <limits>
 #include <stdexcept> // For exception catching
+#include <set>
 // Removed: const int N_CHROMOSOME_TYPES = 22;
 
 // --- Hash function for using std::vector<int> as map key ---
@@ -52,6 +53,63 @@ long long validate_initial_population_count(double count_r, const std::string& k
     Rcpp::stop("`initial_population_r[['%s']]` exceeds the supported long long range.", k_str.c_str());
   }
   return static_cast<long long>(count_r);
+}
+
+long long total_population_count(const PopulationMap& population) {
+  long long total = 0;
+  for (const auto& pair : population) total += pair.second;
+  return total;
+}
+
+PopulationMap trim_population_to_cap(
+    const PopulationMap& population,
+    long long max_population_size,
+    std::mt19937& rng_engine
+) {
+  const long long total = total_population_count(population);
+  if (max_population_size <= 0 || total <= max_population_size) return population;
+
+  struct TrimCandidate {
+    std::vector<int> cn;
+    double fractional;
+    double tie_breaker;
+  };
+
+  PopulationMap trimmed_population;
+  std::vector<TrimCandidate> candidates;
+  long long kept_total = 0;
+  const long double keep_fraction =
+      static_cast<long double>(max_population_size) / static_cast<long double>(total);
+  std::uniform_real_distribution<double> uniform_dist(0.0, 1.0);
+
+  for (const auto& pair : population) {
+    if (pair.second <= 0) continue;
+    const long double expected_keep = static_cast<long double>(pair.second) * keep_fraction;
+    const long long base_keep = static_cast<long long>(std::floor(expected_keep));
+    if (base_keep > 0) trimmed_population[pair.first] = base_keep;
+    kept_total += base_keep;
+    if (base_keep < pair.second) {
+      candidates.push_back({
+        pair.first,
+        static_cast<double>(expected_keep - static_cast<long double>(base_keep)),
+        uniform_dist(rng_engine)
+      });
+    }
+  }
+
+  long long remainder = max_population_size - kept_total;
+  if (remainder > 0) {
+    std::sort(candidates.begin(), candidates.end(), [](const TrimCandidate& a, const TrimCandidate& b) {
+      if (a.fractional == b.fractional) return a.tie_breaker < b.tie_breaker;
+      return a.fractional > b.fractional;
+    });
+    const long long n_increment = std::min<long long>(remainder, static_cast<long long>(candidates.size()));
+    for (long long i = 0; i < n_increment; ++i) {
+      trimmed_population[candidates[static_cast<std::size_t>(i)].cn]++;
+    }
+  }
+
+  return trimmed_population;
 }
 
 } // namespace
@@ -543,7 +601,10 @@ Rcpp::List run_karyotype_abm(
         results_over_time.push_back(counts_cull, std::to_string(step));
       }
       
-      double sampling_fraction = culling_survival_fraction; 
+      double sampling_fraction = std::min(
+        culling_survival_fraction,
+        static_cast<double>(max_population_size) / static_cast<double>(current_total_pop)
+      );
       // Rcpp::Rcout << "Step " << step << ": Population " << current_total_pop // Optional verbose logging
       //             << " exceeded cap " << max_population_size
       //             << ". Culling to approx. " << static_cast<long long>(round(current_total_pop * sampling_fraction)) << " cells." << std::endl;
@@ -557,7 +618,10 @@ Rcpp::List run_karyotype_abm(
             sampled_population[cn_sample] = sampled_count;
           }
         }
-        population = std::move(sampled_population); 
+        population = std::move(sampled_population);
+        if (total_population_count(population) > max_population_size) {
+          population = trim_population_to_cap(population, max_population_size, rng_engine);
+        }
       } else { 
         // Rcpp::Rcout << "Step " << step << ": Sampling fraction is zero or invalid. Population culled entirely." << std::endl; // Optional
         population.clear(); 
