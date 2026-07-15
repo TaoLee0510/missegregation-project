@@ -150,7 +150,7 @@ n_replicates <- 10L
 n_p_mis <- 20L
 n_frequent_karyotypes <- 50L
 diploid_tag <- paste(rep.int(2L, 22L), collapse = ".")
-model_version <- "bounded_grf_v6_alfak_x0_initialization_no_diploid_state"
+model_version <- "bounded_grf_v7_alfak_x0_initialization_culling_cap_no_diploid_state"
 landscape_digest_cache <- new.env(parent = emptyenv())
 
 landscape_digest <- function(landscape_id) {

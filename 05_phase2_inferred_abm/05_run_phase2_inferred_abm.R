@@ -43,7 +43,7 @@ n_cells <- 10000L
 dt <- 0.1
 record_interval <- 50L
 diploid_tag <- paste(rep.int(2L, 22L), collapse = ".")
-model_version <- "phase2_full_endpoint_direct_map_v4_no_diploid_state"
+model_version <- "phase2_full_endpoint_direct_map_v5_culling_cap_no_diploid_state"
 allocation_method <- "largest_remainder_hash_ties_v1"
 
 prepare_initial_population <- function(final_path) {
