@@ -97,8 +97,69 @@ allocate_counts_exact <- function(weights, total, min_count = 0L, tie_breaker = 
 
 alfak_observation_steps <- c(0, 1000, 2000)
 alfak_karyotype_selection <- "union_of_selected_timepoints"
-alfak_minobs <- 10L
-alfak_fit_mode <- sprintf("timepoint_union_karyotypes_steps_0_1000_2000_minobs%d_v1", alfak_minobs)
+alfak_minobs_candidates <- c(20L, 10L, 5L, 3L, 1L)
+alfak_minobs <- alfak_minobs_candidates[[1L]]
+alfak_minobs_strategy <- paste0("fallback_", paste(alfak_minobs_candidates, collapse = "_"))
+alfak_fit_mode <- sprintf("timepoint_union_karyotypes_steps_0_1000_2000_minobs_%s_v1", alfak_minobs_strategy)
+alfak_minobs_fallback_error_message <- "fitKrig: Insufficient or incompatible data for Kriging in bootstrap iteration."
+
+is_alfak_minobs_fallback_error <- function(message) {
+  is.character(message) && length(message) == 1L &&
+    grepl(alfak_minobs_fallback_error_message, message, fixed = TRUE)
+}
+
+collapse_minobs_attempts <- function(x) paste(as.integer(x), collapse = ";")
+
+fit_alfak_with_minobs_fallback <- function(yi, outdir, passage_times, nboot, n0, nb, pm,
+                                           landscape_data_output = FALSE,
+                                           minobs_candidates = alfak_minobs_candidates) {
+  if (!length(minobs_candidates)) stop("`minobs_candidates` must not be empty.", call. = FALSE)
+  minobs_candidates <- as.integer(minobs_candidates)
+  if (any(is.na(minobs_candidates)) || any(minobs_candidates < 1L)) {
+    stop("`minobs_candidates` must be positive integers.", call. = FALSE)
+  }
+  attempts <- list()
+  for (i in seq_along(minobs_candidates)) {
+    current_minobs <- minobs_candidates[[i]]
+    if (dir.exists(outdir)) unlink(outdir, recursive = TRUE)
+    dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+    result <- tryCatch({
+      alfak(yi, outdir = outdir, passage_times = passage_times,
+            minobs = current_minobs, nboot = nboot, n0 = n0, nb = nb, pm = pm,
+            landscape_data_output = landscape_data_output)
+      NULL
+    }, error = function(e) e)
+    if (!inherits(result, "error")) {
+      attempts[[length(attempts) + 1L]] <- data.frame(
+        minobs = current_minobs, status = "completed", message = NA_character_
+      )
+      return(list(
+        success = TRUE,
+        selected_minobs = current_minobs,
+        attempted_minobs = minobs_candidates[seq_len(i)],
+        fallback_used = i > 1L,
+        attempts = bind_status(attempts),
+        message = NA_character_
+      ))
+    }
+    message <- conditionMessage(result)
+    attempts[[length(attempts) + 1L]] <- data.frame(
+      minobs = current_minobs, status = "failed", message = message
+    )
+    if (!is_alfak_minobs_fallback_error(message) || i == length(minobs_candidates)) {
+      if (dir.exists(outdir)) unlink(outdir, recursive = TRUE)
+      return(list(
+        success = FALSE,
+        selected_minobs = NA_integer_,
+        attempted_minobs = minobs_candidates[seq_len(i)],
+        fallback_used = i > 1L,
+        attempts = bind_status(attempts),
+        message = message
+      ))
+    }
+  }
+  stop("unreachable ALFAK fallback state.", call. = FALSE)
+}
 
 prepare_observed_input <- function(observation_path, observation_steps = alfak_observation_steps) {
   observed <- readRDS(observation_path)
