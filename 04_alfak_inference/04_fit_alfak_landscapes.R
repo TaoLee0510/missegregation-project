@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
 # Fit one ALFA-K local landscape for every bounded-GRF landscape, p_mis value,
-# and ABM replicate. Each fit uses every karyotype present at that replicate's
-# phase-1 endpoint, with its full recorded abundance trajectory.
+# and ABM replicate. Each fit uses every karyotype observed anywhere in that
+# replicate's phase-1 trajectory.
 
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args) >= 1L) normalizePath(args[[1]]) else getwd()
@@ -36,12 +36,10 @@ fit_one <- function(observation_path) {
   relative <- sub(paste0("^", abm_dir, "/"), "", replicate_dir)
   out_dir <- file.path(out_root, relative)
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
-  final_path <- file.path(replicate_dir, "final_karyotypes.csv")
   abm_pm <- read_abm_missegregation_rate(observation_path)
   expected_provenance <- list(
-    fit_mode = "all_terminal_karyotypes_v1",
+    fit_mode = "all_observed_karyotypes_v1",
     observation_digest = file_digest(observation_path),
-    final_population_digest = file_digest(final_path),
     nboot = nboot,
     minobs = 1L,
     n0 = 1e4,
@@ -54,14 +52,15 @@ fit_one <- function(observation_path) {
       return(data.frame(status = "skipped", observation = relative))
     }
   }
-  prepared <- prepare_terminal_input(observation_path)
+  prepared <- prepare_observed_input(observation_path)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   tryCatch({
     alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times,
           minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
           landscape_data_output = FALSE)
-    saveRDS(list(observation_path = observation_path, fit_mode = "all_terminal_karyotypes_v1",
-                 n_terminal_karyotypes = length(prepared$terminal), terminal_karyotypes = prepared$terminal, nboot = nboot,
+    saveRDS(list(observation_path = observation_path, fit_mode = "all_observed_karyotypes_v1",
+                 n_observed_karyotypes = length(prepared$observed_karyotypes),
+                 observed_karyotypes = prepared$observed_karyotypes, nboot = nboot,
                  passage_times = prepared$passage_times, n0 = 1e4, nb = 1e4, pm = abm_pm,
                  provenance = expected_provenance),
             file.path(out_dir, "fit_metadata.rds"))

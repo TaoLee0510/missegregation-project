@@ -95,16 +95,26 @@ allocate_counts_exact <- function(weights, total, min_count = 0L, tie_breaker = 
   counts
 }
 
-prepare_terminal_input <- function(observation_path) {
+prepare_observed_input <- function(observation_path) {
   observed <- readRDS(observation_path)
-  final_path <- file.path(dirname(observation_path), "final_karyotypes.csv")
-  final <- read.csv(final_path, stringsAsFactors = FALSE)
-  if (!all(c("karyotype", "count") %in% names(final))) stop("Invalid final population for ", observation_path, call. = FALSE)
-  terminal <- unique(final$karyotype[final$count > 0])
-  if (!length(terminal)) stop("No nonzero endpoint karyotypes for ", observation_path, call. = FALSE)
-  missing <- setdiff(terminal, rownames(observed$x))
-  if (length(missing)) stop("Endpoint karyotypes are absent from the recorded trajectory: ", paste(missing, collapse = ", "), call. = FALSE)
-  list(yi = list(x = observed$x[terminal, , drop = FALSE], dt = observed$dt), passage_times = observed$passage_times, terminal = terminal)
+  if (!is.list(observed) || is.null(observed$x) || is.null(observed$dt) || is.null(observed$passage_times)) {
+    stop("Invalid ABM observation object: ", observation_path, call. = FALSE)
+  }
+  x <- as.matrix(observed$x)
+  if (is.null(rownames(x)) || any(!nzchar(rownames(x)))) {
+    stop("ABM observation matrix must have karyotype row names: ", observation_path, call. = FALSE)
+  }
+  observed_rows <- rowSums(x) > 0
+  if (!any(observed_rows)) stop("No observed karyotypes for ", observation_path, call. = FALSE)
+  x <- x[observed_rows, , drop = FALSE]
+  zero_depth <- colSums(x) <= 0
+  if (any(zero_depth)) {
+    stop("ABM observation has zero-depth timepoint(s): ",
+         paste(colnames(x)[zero_depth], collapse = ", "),
+         " in ", observation_path, call. = FALSE)
+  }
+  list(yi = list(x = x, dt = observed$dt), passage_times = observed$passage_times,
+       observed_karyotypes = rownames(x))
 }
 
 read_abm_missegregation_rate <- function(observation_path) {

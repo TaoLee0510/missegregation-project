@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
-# Fit an ALFA-K landscape to every phase-2 ABM trajectory using every nonzero
-# terminal karyotype and its full recorded trajectory.
+# Fit an ALFA-K landscape to every phase-2 ABM trajectory using every observed
+# karyotype and its full recorded trajectory.
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args)) normalizePath(args[[1]]) else getwd()
 workers <- if (length(args) >= 2L) as.integer(args[[2]]) else 1L
@@ -26,12 +26,10 @@ fit_one <- function(path) {
   relative <- sub(paste0("^", abm_root, "/"), "", dirname(path))
   out_dir <- file.path(out_root, relative)
   metadata_path <- file.path(out_dir, "fit_metadata.rds")
-  final_path <- file.path(dirname(path), "final_karyotypes.csv")
   abm_pm <- read_abm_missegregation_rate(path)
   expected_provenance <- list(
-    fit_mode = "all_terminal_karyotypes_v1",
+    fit_mode = "all_observed_karyotypes_v1",
     observation_digest = file_digest(path),
-    final_population_digest = file_digest(final_path),
     nboot = nboot,
     minobs = 1L,
     n0 = 1e4,
@@ -42,14 +40,16 @@ fit_one <- function(path) {
     previous <- readRDS(metadata_path)
     if (provenance_matches(previous, expected_provenance)) return(data.frame(status = "skipped", observation = relative))
   }
-  prepared <- prepare_terminal_input(path)
+  prepared <- prepare_observed_input(path)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   alfak(prepared$yi, outdir = out_dir, passage_times = prepared$passage_times,
         minobs = 1L, nboot = nboot, n0 = 1e4, nb = 1e4, pm = abm_pm,
         landscape_data_output = FALSE)
-  saveRDS(list(observation_path = path, fit_mode = "all_terminal_karyotypes_v1",
-               n_terminal_karyotypes = length(prepared$terminal), terminal_karyotypes = prepared$terminal,
-               nboot = nboot, pm = abm_pm, provenance = expected_provenance),
+  saveRDS(list(observation_path = path, fit_mode = "all_observed_karyotypes_v1",
+               n_observed_karyotypes = length(prepared$observed_karyotypes),
+               observed_karyotypes = prepared$observed_karyotypes,
+               nboot = nboot, passage_times = prepared$passage_times,
+               n0 = 1e4, nb = 1e4, pm = abm_pm, provenance = expected_provenance),
           metadata_path)
   data.frame(status = "completed", observation = relative)
 }
