@@ -1,8 +1,8 @@
 # Two-stage bounded-GRF CIN / ALFA-K validation project
 
 This project generates bounded synthetic karyotype-evolution data calibrated
-to untreated PDX ploidy, then applies a second CIN phase on each phase-1
-ALFA-K-inferred fitness support.
+to untreated PDX ploidy, then applies a second CIN phase on the same original
+GRF landscape to study paired phase-1 and phase-2 missegregation rates.
 
 ## Execution order
 
@@ -15,14 +15,18 @@ ALFA-K-inferred fitness support.
    10 replicates per landscape.
 4. `04_alfak_inference/04_fit_alfak_landscapes.R` fits the phase-1 landscapes.
 5. `05_phase2_inferred_abm/05_run_phase2_inferred_abm.R` continues every
-   phase-1 replicate under each of the 20 second-stage rates on its own
-   inferred fitness support.
+   phase-1 replicate under each of the 20 second-stage rates on the same
+   original bounded-GRF landscape.
 6. `06_phase2_alfak_inference/06_fit_phase2_landscapes.R` fits phase-2
    landscapes.
 7. `07_phase2_topology_analysis/07_compare_phase2_topologies.R` compares
-   phase-2 fits with their phase-1 inferred source landscapes.
+   phase-1 and phase-2 fits with the original GRF landscape.
 8. `08_phase2_visualization/08_make_phase2_figures.R` produces phase-2
    figures.
+
+After phase-1 ABM completes, phase-1 ALFA-K fitting and phase-2 ABM are
+independent branches. Topology and figures require both the phase-1 ALFA-K
+branch and the phase-2 ALFA-K branch.
 
 Run each script from the project root, passing the root as its first argument:
 

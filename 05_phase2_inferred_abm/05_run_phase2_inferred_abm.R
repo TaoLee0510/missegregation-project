@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 
-# Continue each phase-1 replicate on its own ALFA-K-inferred, finite fitness
-# support across every second-stage p_mis value.  Replicate IDs are inherited,
-# yielding 10 matched replicate trajectories per (p_mis_1, p_mis_2) pair.
+# Continue each phase-1 replicate on the same original bounded-GRF landscape
+# across every second-stage p_mis value. Replicate IDs are inherited, yielding
+# 10 matched replicate trajectories per (p_mis_1, p_mis_2) pair.
 
 args <- commandArgs(trailingOnly = TRUE)
 project_dir <- if (length(args)) normalizePath(args[[1]]) else getwd()
@@ -28,9 +28,15 @@ source(file.path(project_dir, "R", "project_helpers.R"))
 load_project_alfak(project_dir)
 
 phase1_root <- file.path(project_dir, "outputs", "bounded_grf")
-phase1_fit_root <- file.path(project_dir, "outputs", "alfak_inference")
 out_root <- file.path(project_dir, "outputs", "phase2_abm")
 dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
+landscape_dir <- file.path(project_dir, "data", "landscapes")
+reference <- readRDS(file.path(project_dir, "data", "reference_ploidy", "reference_ploidy.rds"))
+reference_digest <- object_digest(reference)
+bound_profile <- reference$bound_profile
+bound_profile_digest <- object_digest(bound_profile)
+lower_copy_numbers <- as.integer(bound_profile$lower_copy_number)
+upper_copy_numbers <- as.integer(bound_profile$upper_copy_number)
 p_mis_path <- file.path(phase1_root, "p_mis_lhs.csv")
 parameters <- read.csv(p_mis_path, stringsAsFactors = FALSE)
 if (!all(c("p_index", "p_mis") %in% names(parameters))) stop("Invalid phase-1 p_mis_lhs.csv.", call. = FALSE)
@@ -43,8 +49,27 @@ n_cells <- 10000L
 dt <- 0.1
 record_interval <- 50L
 diploid_tag <- paste(rep.int(2L, 22L), collapse = ".")
-model_version <- "phase2_full_endpoint_direct_map_v5_culling_cap_no_diploid_state"
+model_version <- "phase2_original_grf_continuation_v1_culling_cap_no_diploid_state"
 allocation_method <- "largest_remainder_hash_ties_v1"
+landscape_digest_cache <- new.env(parent = emptyenv())
+
+landscape_path <- function(landscape_id) file.path(landscape_dir, paste0(landscape_id, ".rds"))
+
+landscape_digest <- function(landscape_id) {
+  if (!exists(landscape_id, envir = landscape_digest_cache, inherits = FALSE)) {
+    assign(landscape_id, file_digest(landscape_path(landscape_id)),
+           envir = landscape_digest_cache)
+  }
+  get(landscape_id, envir = landscape_digest_cache, inherits = FALSE)
+}
+
+fitness_grf <- function(karyotypes, centroids, lambda) {
+  karyotypes <- as.matrix(karyotypes)
+  vapply(seq_len(nrow(karyotypes)), function(i) {
+    d <- sqrt(rowSums((centroids - rep(karyotypes[i, ], each = nrow(centroids)))^2))
+    sum(sin(d / lambda)) / (pi * sqrt(nrow(centroids)))
+  }, numeric(1))
+}
 
 prepare_initial_population <- function(final_path) {
   final <- read.csv(final_path, stringsAsFactors = FALSE)
@@ -78,27 +103,24 @@ source_paths <- function(landscape_id, p1, replicate_id) {
     p1_dir = p1_dir,
     replicate_dir = replicate_dir,
     final_path = file.path(phase1_root, landscape_id, p1_dir, replicate_dir, "final_karyotypes.csv"),
-    inferred_path = file.path(phase1_fit_root, landscape_id, p1_dir, replicate_dir, "landscape.Rds")
+    landscape_path = landscape_path(landscape_id)
   )
 }
 
 prepare_source <- function(landscape_id, p1, replicate_id) {
   paths <- source_paths(landscape_id, p1, replicate_id)
   final_path <- paths$final_path
-  inferred_path <- paths$inferred_path
-  if (!file.exists(final_path) || !file.exists(inferred_path)) stop("Phase-1 endpoint and inferred landscape are required for ", landscape_id, "/", paths$p1_dir, "/", paths$replicate_dir, call. = FALSE)
-  inferred <- readRDS(inferred_path)
-  if (!is.data.frame(inferred) || !all(c("k", "mean") %in% names(inferred))) stop("Invalid phase-1 inferred landscape: ", inferred_path, call. = FALSE)
-  inferred <- inferred[is.finite(inferred$mean) & !duplicated(inferred$k), c("k", "mean")]
-  inferred <- inferred[inferred$k != diploid_tag, , drop = FALSE]
+  grf_path <- paths$landscape_path
+  if (!file.exists(final_path) || !file.exists(grf_path)) stop("Phase-1 endpoint and original GRF landscape are required for ", landscape_id, "/", paths$p1_dir, "/", paths$replicate_dir, call. = FALSE)
+  landscape <- readRDS(grf_path)
+  if (!is.list(landscape) || is.null(landscape$centroids) || is.null(landscape$lambda)) {
+    stop("Invalid original GRF landscape: ", grf_path, call. = FALSE)
+  }
   initial <- prepare_initial_population(final_path)
-  missing <- setdiff(initial$tags, inferred$k)
-  if (length(missing)) stop("Phase-1 inference did not directly estimate every endpoint karyotype: ", paste(missing, collapse = ", "), call. = FALSE)
-  fitness_map <- stats::setNames(as.list(inferred$mean), inferred$k)
-  list(initial = initial, fitness_map = fitness_map, final_path = final_path, inferred_path = inferred_path)
+  list(initial = initial, landscape = landscape, final_path = final_path, landscape_path = grf_path)
 }
 
-manifest <- read.csv(file.path(project_dir, "data", "landscapes", "manifest.csv"), stringsAsFactors = FALSE)
+manifest <- read.csv(file.path(landscape_dir, "manifest.csv"), stringsAsFactors = FALSE)
 if (!is.na(landscape_index)) {
   if (landscape_index > nrow(manifest)) stop("`landscape_index` exceeds the manifest.", call. = FALSE)
   manifest <- manifest[landscape_index, , drop = FALSE]
@@ -127,7 +149,7 @@ run_task <- function(task) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   metadata_path <- file.path(out_dir, "run_metadata.rds")
   paths <- source_paths(task$landscape_id, task$p1, task$replicate_id)
-  stop_if_missing_files(c(paths$final_path, paths$inferred_path), "phase-1 source")
+  stop_if_missing_files(c(paths$final_path, paths$landscape_path), "phase-1 endpoint and original GRF source")
   expected_provenance <- list(
     model_version = model_version,
     allocation_method = allocation_method,
@@ -141,8 +163,11 @@ run_task <- function(task) {
     ),
     p_mis_lhs_digest = p_mis_lhs_digest,
     phase2_parameter_count = nrow(parameters),
+    phase2_landscape_source = "original_bounded_grf_landscape",
     source_final_digest = file_digest(paths$final_path),
-    source_inferred_digest = file_digest(paths$inferred_path),
+    source_landscape_digest = landscape_digest(task$landscape_id),
+    reference_digest = reference_digest,
+    bound_profile_digest = bound_profile_digest,
     n_cells = n_cells,
     n_steps = n_steps,
     dt = dt,
@@ -162,19 +187,32 @@ run_task <- function(task) {
   seed <- 1200000L + as.integer(sub(".*_", "", task$landscape_id)) * 100000L + task$p1$p_index * 1000L + task$replicate_id * 100L + task$p2$p_index
   raw <- run_alfak_abm(
     initial_population_r = stats::setNames(as.list(source$initial$counts), source$initial$tags),
-    fitness_map_r = source$fitness_map, p_missegregation = task$p2$p_mis,
+    fitness_map_r = stats::setNames(list(), character(0)), p_missegregation = task$p2$p_mis,
     dt = dt, n_steps = n_steps, max_population_size = n_cells,
     culling_survival_fraction = 0.999, record_interval = record_interval, seed = seed,
+    grf_centroids = source$landscape$centroids,
+    grf_lambda = source$landscape$lambda,
+    lower_copy_numbers = lower_copy_numbers,
+    upper_copy_numbers = upper_copy_numbers,
     excluded_karyotypes = diploid_tag
   )
+  boundary_rejections <- attr(raw, "boundary_rejections")
+  boundary_rejections <- if (length(boundary_rejections)) unname(boundary_rejections[[1L]]) else NA_integer_
   saveRDS(raw_to_observations(raw, dt), file.path(out_dir, "abm_observations.rds"))
   final_counts <- raw[[tail(names(raw), 1L)]]
-  final_fitness <- unlist(source$fitness_map[names(final_counts)], use.names = FALSE)
+  k <- do.call(rbind, strsplit(names(final_counts), ".", fixed = TRUE))
+  storage.mode(k) <- "numeric"
+  final_fitness <- fitness_grf(k, source$landscape$centroids, source$landscape$lambda)
   utils::write.csv(data.frame(karyotype = names(final_counts), count = as.numeric(final_counts), fitness = final_fitness), file.path(out_dir, "final_karyotypes.csv"), row.names = FALSE)
   saveRDS(list(landscape_id = task$landscape_id, p_mis_phase1 = task$p1$p_mis, p_mis_phase2 = task$p2$p_mis,
                replicate_id = task$replicate_id, seed = seed, n_steps = n_steps, source_final_path = source$final_path,
-               source_inferred_path = source$inferred_path,
-               phase2_support = "phase-1 ALFA-K support plus every retained endpoint karyotype; diploid state excluded", excluded_karyotypes = diploid_tag,
+               source_landscape_path = source$landscape_path,
+               phase2_landscape_source = "original bounded-GRF landscape matching phase-1 ABM",
+               phase2_support = "original bounded GRF evaluated on every in-bounds karyotype; diploid state excluded",
+               fitness_mode = "full GRF evaluated on every in-bounds karyotype",
+               bounds = bound_profile,
+               boundary_rejections = boundary_rejections,
+               excluded_karyotypes = diploid_tag,
                model_version = model_version, provenance = expected_provenance), metadata_path)
   data.frame(status = "completed", landscape_id = task$landscape_id, p1_index = task$p1$p_index, p2_index = task$p2$p_index, replicate_id = task$replicate_id)
 }

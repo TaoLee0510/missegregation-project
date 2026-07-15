@@ -40,7 +40,9 @@ Wait for every ABM element to succeed. A failed simulation or fit returns a
 non-zero exit code, so Slurm records the element as failed. Per-landscape
 status files are written under `outputs/bounded_grf/`.
 
-Afterward, count the observations and submit 100 fits per array element.
+Afterward, count the observations and submit phase-1 ALFA-K fits. These fits
+estimate the phase-1 inferred landscapes for downstream topology analysis, but
+they are not the fitness source for phase-2 ABM.
 
 ```sh
 n=$(find outputs/bounded_grf -name abm_observations.rds | wc -l)
@@ -57,10 +59,13 @@ shared output writes: each array element owns a landscape or inference result.
 
 For every original landscape, the second phase forms a 20 × 20 grid of
 `p_mis_phase1` and `p_mis_phase2`. The 10 phase-1 replicate lineages are
-continued, yielding `n_landscapes × 20 × 20 × 10` phase-2 trajectories. Each
-phase-2 array element owns one ABM simulation: one landscape, one phase-1
-rate, one inherited replicate, and one phase-2 rate. If the resulting task
-count exceeds the cluster MaxArraySize, submit chunks with `TASK_OFFSET`.
+continued on the same original bounded-GRF landscape, yielding
+`n_landscapes × 20 × 20 × 10` phase-2 trajectories. Each phase-2 array element
+owns one ABM simulation: one landscape, one phase-1 rate, one inherited
+replicate, and one phase-2 rate. Phase-2 ABM only requires the completed
+phase-1 ABM endpoints and the original GRF inputs; it does not depend on
+phase-1 ALFA-K. If the resulting task count exceeds the cluster MaxArraySize,
+submit chunks with `TASK_OFFSET`.
 
 ```sh
 n_rates=$(Rscript -e 'cat(nrow(read.csv("outputs/bounded_grf/p_mis_lhs.csv", stringsAsFactors = FALSE)))')
@@ -86,8 +91,9 @@ test "$n" -eq "$phase2_tasks" || { echo "Expected ${phase2_tasks} phase-2 observ
 sbatch --array=1-${tasks} hpc/run_phase2_inference_array.sbatch
 ```
 
-After all phase-2 fits succeed, compute topology in one task per landscape,
-then build the figures from their compact CSV shards.
+After all phase-2 fits succeed and the phase-1 ALFA-K branch is complete,
+compute topology in one task per landscape, then build the figures from their
+compact CSV shards.
 
 ```sh
 sbatch --array=1-${n_landscapes} hpc/run_phase2_topology_array.sbatch

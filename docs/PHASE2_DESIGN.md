@@ -1,30 +1,30 @@
-# Phase-2 inferred-landscape experiment
+# Phase-2 original-GRF continuation experiment
 
 For each landscape listed in `data/landscapes/manifest.csv`, phase-1 rate index `i = 1, …, 20`,
 phase-2 rate index `j = 1, …, 20`, and matched replicate `r = 1, …, 10`,
 the phase-2 trajectory is
 
-`X₂(L, i, j, r) = ABM(X₁_terminal(L, i, r), f̂₁(L, i, r), p_mis[j])`.
+`X₂(L, i, j, r) = ABM(X₁_terminal(L, i, r), f_GRF(L), p_mis[j])`.
 
-`f̂₁(L, i, r)` is the ALFA-K landscape inferred from the corresponding
-phase-1 trajectory. The design is therefore a 20 × 20 rate-pair matrix per
-original landscape, with 10 matched replicate lineages in every cell:
+`f_GRF(L)` is the original bounded-GRF landscape used by the corresponding
+phase-1 ABM. The design is therefore a 20 × 20 rate-pair matrix per original
+landscape, with 10 matched replicate lineages in every cell:
 
 `n_landscapes × 20 × 20 × 10` phase-2 trajectories.
 
-Phase-1 ALFA-K fitting includes every karyotype present at that replicate's
-endpoint, using its full recorded trajectory. The phase-2 starting population
-then retains every nonzero phase-1 endpoint karyotype and proportionally
-rescales their counts to 10,000 cells. Every retained state therefore has a
-direct phase-1 inferred mean fitness; no Kriging fill-in or posterior samples
-are used.
+Phase-1 ALFA-K fitting remains part of the analysis branch: it estimates
+`f̂₁(L, i, r)` from the corresponding phase-1 trajectory, but `f̂₁` is not
+used as the phase-2 ABM fitness source. The phase-2 starting population
+retains every nonzero phase-1 endpoint karyotype and proportionally rescales
+their counts to 10,000 cells.
 
-The C++ ABM receives the original phase-1 ALFA-K support plus the retained
-endpoint states. It retains offspring only when their karyotype occurs in this
-fixed map; all descendants beyond that existing ALFA-K support are removed.
-The all-diploid karyotype is excluded from phase 1 and phase 2, including
-initial populations and descendants. Phase-2 fitting uses every nonzero
-phase-2 terminal karyotype with its full recorded trajectory, matching phase 1.
+The C++ ABM receives the original bounded-GRF centroids, lambda, and
+chromosome-specific PDX bounds. It evaluates every in-bounds descendant
+directly on the GRF; descendants outside the bounded domain are removed. The
+all-diploid karyotype is excluded from phase 1 and phase 2, including initial
+populations and descendants. Phase-2 fitting uses the recorded phase-2
+trajectory, matching phase 1.
+
 Topology analysis is three-way: original GRF truth, phase-1 inference, and
 phase-2 inference. Full-support node, edge, component, and local-maximum
 readouts are reported for each inferred map. The original GRF is evaluated on

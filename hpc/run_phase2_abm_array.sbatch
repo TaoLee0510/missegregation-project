@@ -1,9 +1,11 @@
 #!/bin/bash
 # One array element runs one phase-2 ABM simulation:
 # one landscape x one phase-1 rate x one inherited replicate x one phase-2 rate.
+# The phase-2 simulation continues on the same original bounded-GRF landscape;
+# phase-1 ALFA-K output is analyzed downstream but is not the ABM fitness source.
 # Submit with --array=1-${N}, chunked with TASK_OFFSET when N exceeds the
 # cluster MaxArraySize. N = n_landscapes * 20 * 10 * 20.
-#SBATCH --job-name=phase2-inferred-abm
+#SBATCH --job-name=phase2-grf-abm
 #SBATCH --cpus-per-task=1
 #SBATCH --time=1-00:00:00
 #SBATCH --mem=4G

@@ -121,7 +121,7 @@ for (i in seq_along(paths)) {
   original_fitness <- grf_fitness(final$karyotype, truth)
   summary_rows[[relative]] <- data.frame(landscape_id, p1_dir, replicate_id, p2_dir,
     terminal_population = sum(final$count), terminal_diversity = sum(final$count > 0),
-    mean_source_inferred_fitness = stats::weighted.mean(final$fitness, final$count),
+    mean_phase2_abm_source_grf_fitness = stats::weighted.mean(final$fitness, final$count),
     mean_original_grf_fitness = stats::weighted.mean(original_fitness, final$count))
 }
 metrics <- do.call(rbind, metric_rows)
