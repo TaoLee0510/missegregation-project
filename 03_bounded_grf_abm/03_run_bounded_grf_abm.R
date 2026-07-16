@@ -448,6 +448,42 @@ prepare_landscape <- function(landscape_id) {
   )
 }
 
+validate_p_mis_table <- function(path, expected) {
+  if (!file.exists(path)) return(FALSE)
+  existing <- tryCatch(read.csv(path, stringsAsFactors = FALSE), error = function(e) e)
+  if (inherits(existing, "error")) return(FALSE)
+  invalid_param <- !all(names(expected) %in% names(existing)) ||
+    nrow(existing) != nrow(expected) ||
+    !identical(as.integer(existing$p_index), as.integer(expected$p_index)) ||
+    !isTRUE(all.equal(existing$p_mis, expected$p_mis, tolerance = 1e-12, check.attributes = FALSE))
+  if (invalid_param) {
+    stop("Existing p_mis_lhs.csv does not match the current deterministic p_mis table.", call. = FALSE)
+  }
+  TRUE
+}
+
+ensure_p_mis_table <- function(path, expected, timeout_seconds = 120, poll_seconds = 0.25) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  if (validate_p_mis_table(path, expected)) return(invisible(path))
+
+  lock_dir <- paste0(path, ".lock")
+  if (dir.create(lock_dir, showWarnings = FALSE)) {
+    on.exit(unlink(lock_dir, recursive = TRUE, force = TRUE), add = TRUE)
+    if (!validate_p_mis_table(path, expected)) write_csv_atomic(expected, path, row.names = FALSE)
+    if (!validate_p_mis_table(path, expected)) {
+      stop("Could not create a readable p_mis_lhs.csv.", call. = FALSE)
+    }
+    return(invisible(path))
+  }
+
+  deadline <- Sys.time() + timeout_seconds
+  while (Sys.time() < deadline) {
+    if (validate_p_mis_table(path, expected)) return(invisible(path))
+    Sys.sleep(poll_seconds)
+  }
+  stop("Timed out waiting for p_mis_lhs.csv to be created by another task.", call. = FALSE)
+}
+
 manifest <- profile_step("load_landscape_manifest", read.csv(file.path(landscape_dir, "manifest.csv"), stringsAsFactors = FALSE))
 if (!is.na(landscape_index)) {
   if (landscape_index > nrow(manifest)) stop("`landscape_index` exceeds the number of landscapes.", call. = FALSE)
@@ -461,22 +497,7 @@ p_mis <- 0.00025 + lhs_u * (0.01 - 0.00025)
 param_table <- data.frame(p_index = seq_along(p_mis), p_mis = p_mis)
 param_path <- file.path(results_dir, "p_mis_lhs.csv")
 invisible(profile_step("prepare_p_mis_table", {
-  if (!file.exists(param_path)) {
-    param_tmp <- tempfile("p_mis_lhs_", tmpdir = results_dir)
-    utils::write.csv(param_table, param_tmp, row.names = FALSE)
-    if (!file.rename(param_tmp, param_path) && !file.exists(param_path)) {
-      stop("Could not create p_mis_lhs.csv.", call. = FALSE)
-    }
-  } else {
-    existing_param <- read.csv(param_path, stringsAsFactors = FALSE)
-    invalid_param <- !all(names(param_table) %in% names(existing_param)) ||
-      nrow(existing_param) != nrow(param_table) ||
-      !identical(as.integer(existing_param$p_index), as.integer(param_table$p_index)) ||
-      !isTRUE(all.equal(existing_param$p_mis, param_table$p_mis, tolerance = 1e-12, check.attributes = FALSE))
-    if (invalid_param) {
-      stop("Existing p_mis_lhs.csv does not match the current deterministic p_mis table.", call. = FALSE)
-    }
-  }
+  ensure_p_mis_table(param_path, param_table)
 }, output_path = param_path))
 p_mis_lhs_digest <- file_digest(param_path)
 if (!is.na(p_index_filter) && p_index_filter > nrow(param_table)) stop("`p_index` exceeds the p_mis table.", call. = FALSE)
