@@ -99,14 +99,10 @@ alfak_observation_steps <- c(0, 1000, 2000)
 alfak_karyotype_selection <- "union_of_selected_timepoints"
 alfak_minobs_candidates <- c(20L, 10L, 5L, 3L, 1L)
 alfak_minobs <- alfak_minobs_candidates[[1L]]
-alfak_minobs_strategy <- paste0("fallback_", paste(alfak_minobs_candidates, collapse = "_"))
-alfak_fit_mode <- sprintf("timepoint_union_karyotypes_steps_0_1000_2000_minobs_%s_v1", alfak_minobs_strategy)
-alfak_minobs_fallback_error_message <- "fitKrig: Insufficient or incompatible data for Kriging in bootstrap iteration."
-
-is_alfak_minobs_fallback_error <- function(message) {
-  is.character(message) && length(message) == 1L &&
-    grepl(alfak_minobs_fallback_error_message, message, fixed = TRUE)
-}
+alfak_minobs_fallback_policy <- "retry_all_alfak_fit_errors"
+alfak_minobs_strategy <- paste0("fallback_", paste(alfak_minobs_candidates, collapse = "_"),
+                                "_", alfak_minobs_fallback_policy)
+alfak_fit_mode <- sprintf("timepoint_union_karyotypes_steps_0_1000_2000_minobs_%s_v2", alfak_minobs_strategy)
 
 collapse_minobs_attempts <- function(x) paste(as.integer(x), collapse = ";")
 
@@ -146,7 +142,7 @@ fit_alfak_with_minobs_fallback <- function(yi, outdir, passage_times, nboot, n0,
     attempts[[length(attempts) + 1L]] <- data.frame(
       minobs = current_minobs, status = "failed", message = message
     )
-    if (!is_alfak_minobs_fallback_error(message) || i == length(minobs_candidates)) {
+    if (i == length(minobs_candidates)) {
       if (dir.exists(outdir)) unlink(outdir, recursive = TRUE)
       return(list(
         success = FALSE,

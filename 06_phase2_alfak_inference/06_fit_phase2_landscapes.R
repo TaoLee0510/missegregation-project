@@ -36,7 +36,7 @@ fit_one <- function(path) {
     minobs = alfak_minobs,
     minobs_candidates = alfak_minobs_candidates,
     minobs_strategy = alfak_minobs_strategy,
-    minobs_fallback_error_message = alfak_minobs_fallback_error_message,
+    minobs_fallback_policy = alfak_minobs_fallback_policy,
     n0 = 1e4,
     nb = 1e4,
     pm = abm_pm
@@ -78,6 +78,7 @@ fit_one <- function(path) {
                attempted_minobs = fit_result$attempted_minobs,
                minobs_candidates = alfak_minobs_candidates,
                minobs_strategy = alfak_minobs_strategy,
+               minobs_fallback_policy = alfak_minobs_fallback_policy,
                fallback_used = fit_result$fallback_used,
                fallback_attempts = fit_result$attempts,
                n0 = 1e4, nb = 1e4, pm = abm_pm, provenance = expected_provenance),
