@@ -180,8 +180,13 @@ run_task <- function(task) {
     if (provenance_matches(previous, expected_provenance)) return(data.frame(status = "skipped", landscape_id = task$landscape_id, p1_index = task$p1$p_index, p2_index = task$p2$p_index, replicate_id = task$replicate_id))
   }
   source <- prepare_source(task$landscape_id, task$p1, task$replicate_id)
-  initial_path <- file.path(source_dir, "phase2_initialization.rds")
-  if (!file.exists(initial_path) || !provenance_matches(readRDS(initial_path), source$initial$provenance)) {
+  initial_path <- file.path(out_dir, "phase2_initialization.rds")
+  previous_initial <- if (file.exists(initial_path)) {
+    tryCatch(readRDS(initial_path), error = function(e) NULL)
+  } else {
+    NULL
+  }
+  if (is.null(previous_initial) || !provenance_matches(previous_initial, source$initial$provenance)) {
     write_rds_atomic(source$initial, initial_path)
   }
   seed <- 1200000L + as.integer(sub(".*_", "", task$landscape_id)) * 100000L + task$p1$p_index * 1000L + task$replicate_id * 100L + task$p2$p_index
