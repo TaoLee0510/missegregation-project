@@ -121,9 +121,14 @@ invisible(profile_step("load_reference_inputs", {
   reference <- readRDS(file.path(project_dir, "data", "reference_ploidy", "reference_ploidy.rds"))
   reference_digest <- object_digest(reference)
   bound_profile <- reference$bound_profile
+  bound_profile$lower_copy_number <- pmax(1L, as.integer(bound_profile$lower_copy_number))
+  bound_profile$upper_copy_number <- as.integer(bound_profile$upper_copy_number)
+  if (any(bound_profile$upper_copy_number < bound_profile$lower_copy_number)) {
+    stop("Reference copy-number bounds have upper_copy_number < lower_copy_number after enforcing min copy 1.", call. = FALSE)
+  }
   bound_profile_digest <- object_digest(bound_profile)
-  lower_copy_numbers <- as.integer(bound_profile$lower_copy_number)
-  upper_copy_numbers <- as.integer(bound_profile$upper_copy_number)
+  lower_copy_numbers <- bound_profile$lower_copy_number
+  upper_copy_numbers <- bound_profile$upper_copy_number
   reference_mean_ploidy <- reference$reference_mean_ploidy
   arm_loci <- readRDS(file.path(project_dir, "data", "salehi_reference", "raw", "arm_loci.Rds"))
   length_table <- aggregate(end ~ chrom, data = subset(arm_loci, chrom %in% as.character(1:22)), FUN = max)

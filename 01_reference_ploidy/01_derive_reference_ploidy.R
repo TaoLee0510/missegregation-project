@@ -93,8 +93,8 @@ reference_mean_ploidy <- mean(selected$pooled_weighted_ploidy)
 # A broad, chromosome-specific support is safer than one global copy-number
 # cap.  The upper bound is the empirical 99.5th percentile plus one copy: the
 # extra copy prevents the observed tail itself from becoming the simulation
-# boundary.  Lower bounds remain zero because nullisomies occur in the source
-# data; their biological consequences are handled by GRF fitness.
+# boundary.  ABM support excludes nullisomies, so every chromosome lower bound
+# is at least one copy.
 cell_copy_numbers <- do.call(rbind, lapply(selected$lineage_id, function(lineage_id) {
   x <- readRDS(file.path(input_dir, paste0(lineage_id, ".Rds")))$x
   k <- do.call(rbind, strsplit(rownames(x), ".", fixed = TRUE))
@@ -103,7 +103,7 @@ cell_copy_numbers <- do.call(rbind, lapply(selected$lineage_id, function(lineage
 }))
 upper_quantile <- 0.995
 upper_copy_numbers <- ceiling(apply(cell_copy_numbers, 2, stats::quantile, probs = upper_quantile, names = FALSE)) + 1L
-lower_copy_numbers <- rep.int(0L, 22L)
+lower_copy_numbers <- rep.int(1L, 22L)
 bound_profile <- data.frame(
   chromosome = seq_len(22L),
   lower_copy_number = lower_copy_numbers,
