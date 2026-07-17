@@ -11,8 +11,18 @@ set -euo pipefail
 : "${R_LIBS_USER:?Export R_LIBS_USER before submitting.}"
 : "${SLURM_ARRAY_TASK_ID:?Submit through Slurm.}"
 
+if [[ -n "${R_MODULE:-}" ]]; then
+  module load "$R_MODULE"
+fi
 cd "$PROJECT_DIR"
 fits_per_task=${FITS_PER_TASK:-100}
-fit_start=$(( (SLURM_ARRAY_TASK_ID - 1) * fits_per_task + 1 ))
-Rscript 04_alfak_inference/04_fit_alfak_landscapes.R \
-  "$PROJECT_DIR" 1 45 "$fit_start" "$fits_per_task"
+manifest=${ALFAK_MANIFEST:-}
+if [[ -n "$manifest" ]]; then
+  fit_start=$(( (SLURM_ARRAY_TASK_ID - 1) * fits_per_task + 1 ))
+  Rscript 04_alfak_inference/04_fit_alfak_landscapes.R \
+    "$PROJECT_DIR" 1 45 "$fit_start" "$fits_per_task" "$manifest"
+else
+  fit_start=$(( (SLURM_ARRAY_TASK_ID - 1) * fits_per_task + 1 ))
+  Rscript 04_alfak_inference/04_fit_alfak_landscapes.R \
+    "$PROJECT_DIR" 1 45 "$fit_start" "$fits_per_task"
+fi

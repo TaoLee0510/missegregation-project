@@ -64,6 +64,61 @@ provenance_matches <- function(previous, expected) {
   is.list(previous) && is.list(previous$provenance) && identical(previous$provenance, expected)
 }
 
+alfak_expected_provenance <- function(observation_path, nboot) {
+  abm_pm <- read_abm_missegregation_rate(observation_path)
+  list(
+    fit_mode = alfak_fit_mode,
+    observation_digest = file_digest(observation_path),
+    observation_steps = alfak_observation_steps,
+    karyotype_selection = alfak_karyotype_selection,
+    nboot = as.integer(nboot),
+    minobs = alfak_minobs,
+    minobs_candidates = alfak_minobs_candidates,
+    minobs_strategy = alfak_minobs_strategy,
+    minobs_fallback_policy = alfak_minobs_fallback_policy,
+    n0 = 1e4,
+    nb = 1e4,
+    pm = abm_pm
+  )
+}
+
+alfak_relative_observation_dir <- function(observation_path, abm_root) {
+  sub(paste0("^", abm_root, "/"), "", dirname(observation_path))
+}
+
+alfak_fit_paths <- function(observation_path, abm_root, out_root) {
+  relative <- alfak_relative_observation_dir(observation_path, abm_root)
+  out_dir <- file.path(out_root, relative)
+  list(
+    relative = relative,
+    out_dir = out_dir,
+    metadata_path = file.path(out_dir, "fit_metadata.rds"),
+    landscape_path = file.path(out_dir, "landscape.Rds")
+  )
+}
+
+alfak_fit_completion_status <- function(observation_path, abm_root, out_root, nboot) {
+  paths <- alfak_fit_paths(observation_path, abm_root, out_root)
+  if (!file.exists(paths$metadata_path)) {
+    return(c(paths, list(complete = FALSE, reason = "missing_metadata")))
+  }
+  if (!file.exists(paths$landscape_path)) {
+    return(c(paths, list(complete = FALSE, reason = "missing_landscape")))
+  }
+  previous <- tryCatch(readRDS(paths$metadata_path), error = function(e) e)
+  if (inherits(previous, "error")) {
+    return(c(paths, list(complete = FALSE, reason = paste0("invalid_metadata: ", conditionMessage(previous)))))
+  }
+  expected <- tryCatch(alfak_expected_provenance(observation_path, nboot), error = function(e) e)
+  if (inherits(expected, "error")) {
+    return(c(paths, list(complete = FALSE, reason = paste0("invalid_expected_provenance: ", conditionMessage(expected)))))
+  }
+  if (!provenance_matches(previous, expected)) {
+    return(c(paths, list(complete = FALSE, reason = "provenance_mismatch")))
+  }
+  c(paths, list(complete = TRUE, reason = "complete"))
+}
+
 stable_string_hash <- function(x) {
   vapply(x, function(one) {
     ints <- utf8ToInt(one)

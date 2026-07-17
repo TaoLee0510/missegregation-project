@@ -10,5 +10,8 @@ set -euo pipefail
 : "${PROJECT_DIR:?Export PROJECT_DIR before submitting.}"
 : "${R_LIBS_USER:?Export R_LIBS_USER before submitting.}"
 : "${SLURM_ARRAY_TASK_ID:?Submit through Slurm.}"
+if [[ -n "${R_MODULE:-}" ]]; then
+  module load "$R_MODULE"
+fi
 cd "$PROJECT_DIR"
 Rscript 07_phase2_topology_analysis/07_compare_phase2_topologies.R "$PROJECT_DIR" "$SLURM_ARRAY_TASK_ID"

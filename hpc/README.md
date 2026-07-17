@@ -40,15 +40,15 @@ Wait for every ABM element to succeed. A failed simulation or fit returns a
 non-zero exit code, so Slurm records the element as failed. Per-landscape
 status files are written under `outputs/bounded_grf/`.
 
-Afterward, count the observations and submit phase-1 ALFA-K fits. These fits
+Afterward, submit phase-1 ALFA-K fits with the retry driver. These fits
 estimate the phase-1 inferred landscapes for downstream topology analysis, but
-they are not the fitness source for phase-2 ABM.
+they are not the fitness source for phase-2 ABM. The driver builds a pending
+manifest before every submission, so Slurm arrays contain only fits without a
+complete, provenance-matching `fit_metadata.rds` and `landscape.Rds`.
 
 ```sh
-n=$(find outputs/bounded_grf -name abm_observations.rds | wc -l)
-tasks=$(( (n + 99) / 100 ))
-test "$n" -eq "$phase1_tasks" || { echo "Expected ${phase1_tasks} phase-1 observations, found $n"; exit 1; }
-sbatch --array=1-${tasks} hpc/run_inference_array.sbatch
+MEMORY_TIERS="32G 64G 128G 256G 512G" FITS_PER_TASK=1 \
+  bash hpc/submit_alfak_retry_by_memory.sh phase1
 ```
 
 Update the `#SBATCH` time and memory directives after a one-landscape ABM
@@ -80,15 +80,12 @@ while [ "$offset" -lt "$phase2_tasks" ]; do
 done
 ```
 
-Phase-2 inference is batched at 100 fits per element to avoid scheduler array
-limits. After the phase-2 ABM completes, count observations and submit the
-corresponding number of batches.
+Phase-2 inference uses the same pending-manifest retry driver. It retries only
+the incomplete phase-2 fits at each memory tier.
 
 ```sh
-n=$(find outputs/phase2_abm -name abm_observations.rds | wc -l)
-tasks=$(( (n + 99) / 100 ))
-test "$n" -eq "$phase2_tasks" || { echo "Expected ${phase2_tasks} phase-2 observations, found $n"; exit 1; }
-sbatch --array=1-${tasks} hpc/run_phase2_inference_array.sbatch
+MEMORY_TIERS="32G 64G 128G 256G 512G" FITS_PER_TASK=1 \
+  bash hpc/submit_alfak_retry_by_memory.sh phase2
 ```
 
 After all phase-2 fits succeed and the phase-1 ALFA-K branch is complete,
@@ -98,4 +95,11 @@ compact CSV shards.
 ```sh
 sbatch --array=1-${n_landscapes} hpc/run_phase2_topology_array.sbatch
 Rscript 08_phase2_visualization/08_make_phase2_figures.R "$PROJECT_DIR"
+```
+
+To run both ALFA-K phases and then submit topology/figures automatically:
+
+```sh
+MEMORY_TIERS="32G 64G 128G 256G 512G" FITS_PER_TASK=1 \
+  bash hpc/submit_alfak_retry_by_memory.sh both
 ```
