@@ -110,8 +110,13 @@ submit_phase_job() {
 
 wait_for_job() {
   local job_id=$1
+  local remaining
   echo "Waiting for Slurm job $job_id"
-  while squeue -h -j "$job_id" | grep -q .; do
+  while true; do
+    remaining=$(squeue -h -j "$job_id" -o "%i" | wc -l | awk '{print $1}')
+    if [[ "$remaining" -eq 0 ]]; then
+      break
+    fi
     sleep "$POLL_SECONDS"
   done
   sleep 15
